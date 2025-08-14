@@ -280,98 +280,139 @@ def log_final_trade_result(symbol, trade_id, entry_price, exit_price, result,
         log_error(f"❌ log_final_trade_result() — помилка: {e}")
 
 
-def log_clean_open_signal(symbol, trade_id, entry_price, snapshot):
-    """
-    📥 Додає новий запис у signal_stats.json при відкритті угоди (без PnL та результатів).
-    """
-    try:
-        if not os.path.exists(STATS_PATH):
-            log_message("📄 STATS_PATH не знайдено, створюю новий файл.")
-            stats = []
-        else:
-            with open(STATS_PATH, "r", encoding="utf-8") as f:
-                try:
-                    stats = json.load(f)
-                except json.JSONDecodeError:
-                    log_error("❌ STATS_PATH пошкоджений — скидаю у [].")
-                    stats = []
-
-        # Створюємо початковий запис
-        timestamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
-        open_entry = {
-            "symbol": symbol,
-            "trade_id": trade_id,
-            "entry_price": entry_price,
-            "signals": snapshot.get("conditions", {}),
-            "timestamp": timestamp
-        }
-
-        stats.append(open_entry)
-
-        with open(STATS_PATH, "w", encoding="utf-8") as f:
-            json.dump(stats[-500:], f, indent=2, ensure_ascii=False)
-
-        log_message(f"✅ Додано сигнал для {symbol} у signal_stats.json")
-
-    except Exception as e:
-        log_error(f"❌ log_clean_open_signal() — помилка: {e}")
-
-
-
 def append_signal_record(trade_record):
     """
     📝 Додає новий запис у signal_stats.json при відкритті угоди.
+    - потокобезпечно (глобальний lock)
+    - атомарний запис (tempfile + os.replace)
+    Повертає True/False.
     """
+    import json, os, tempfile, threading
+
+    # Спільний лок для всіх операцій із signal_stats.json
+    global _SIGLOG_LOCK
     try:
-        if not os.path.exists(STATS_PATH):
-            with open(STATS_PATH, "w", encoding="utf-8") as f:
-                json.dump([], f)
+        _SIGLOG_LOCK
+    except NameError:
+        _SIGLOG_LOCK = threading.Lock()
 
-        with open(STATS_PATH, "r", encoding="utf-8") as f:
-            stats = json.load(f)
+    if not isinstance(trade_record, dict) or not trade_record.get("trade_id"):
+        log_error("❌ [signal_logger] append_signal_record: trade_record невалідний або без trade_id")
+        return False
 
-        stats.append(trade_record)
+    try:
+        with _SIGLOG_LOCK:
+            # ensure файл існує
+            if not os.path.exists(STATS_PATH):
+                # одразу атомарно створимо порожній список
+                dirn = os.path.dirname(STATS_PATH) or "."
+                content = "[]"
+                with tempfile.NamedTemporaryFile("w", delete=False, encoding="utf-8",
+                                                 dir=dirn, prefix=".swap_", suffix=".json") as tmp:
+                    tmp.write(content)
+                    tmp_path = tmp.name
+                os.replace(tmp_path, STATS_PATH)
 
-        with open(STATS_PATH, "w", encoding="utf-8") as f:
-            json.dump(stats, f, indent=2, ensure_ascii=False)
+            # read (безпечне)
+            try:
+                with open(STATS_PATH, "r", encoding="utf-8") as f:
+                    stats = json.load(f)
+                if not isinstance(stats, list):
+                    stats = []
+            except Exception as e:
+                log_message(f"⚠️ [signal_logger] read error, ініціалізую порожній список: {e}")
+                stats = []
 
-        log_message(f"✅ [signal_logger] Новий запис додано у signal_stats.json (trade_id={trade_record.get('trade_id')})")
+            # append
+            stats.append(trade_record)
+
+            # atomic write
+            try:
+                content = json.dumps(stats, indent=2, ensure_ascii=False)
+                dirn = os.path.dirname(STATS_PATH) or "."
+                with tempfile.NamedTemporaryFile("w", delete=False, encoding="utf-8",
+                                                 dir=dirn, prefix=".swap_", suffix=".json") as tmp:
+                    tmp.write(content)
+                    tmp_path = tmp.name
+                os.replace(tmp_path, STATS_PATH)
+            except Exception as e:
+                log_error(f"❌ [signal_logger] write error: {e}")
+                return False
+
+        log_message(f"✅ [signal_logger] Новий запис додано (trade_id={trade_record.get('trade_id')})")
+        return True
 
     except Exception as e:
         log_error(f"❌ [signal_logger] append_signal_record: помилка → {e}")
+        return False
+
 
 def update_signal_record(trade_id, updates):
     """
-    🔄 Оновлює існуючий запис у signal_stats.json за trade_id або symbol+opened
+    🔄 Оновлює існуючий запис у signal_stats.json СТРОГО за trade_id.
+    - без фолбеків по symbol
+    - потокобезпечно (lock)
+    - атомарний запис (tempfile + os.replace)
+    Повертає True/False (знайшли/не знайшли).
     """
+    import json, os, tempfile, threading
+
+    # Глобальний лок для всіх I/O з signal_stats.json (оголошується один раз)
+    global _SIGLOG_LOCK
     try:
-        if not os.path.exists(STATS_PATH):
-            log_error("❌ [signal_logger] signal_stats.json не знайдено.")
-            return
+        _SIGLOG_LOCK
+    except NameError:
+        _SIGLOG_LOCK = threading.Lock()
 
-        with open(STATS_PATH, "r", encoding="utf-8") as f:
-            stats = json.load(f)
+    if not isinstance(trade_id, str) or not trade_id:
+        log_error("❌ [signal_logger] update_signal_record: невалідний trade_id")
+        return False
 
-        updated = False
-        for trade in stats:
-            # Спочатку шукаємо за trade_id
-            if trade.get("trade_id") == trade_id:
-                trade.update(updates)
-                updated = True
-                break
-            # Якщо trade_id не збігся → fallback на symbol+opened
-            elif (trade.get("symbol") in trade_id and not trade.get("closed", False)):
-                log_message(f"⚠️ [signal_logger] Збіг за symbol={trade.get('symbol')} (без trade_id)")
-                trade.update(updates)
-                updated = True
-                break
+    try:
+        with _SIGLOG_LOCK:
+            if not os.path.exists(STATS_PATH):
+                log_error("❌ [signal_logger] signal_stats.json не знайдено.")
+                return False
 
-        if updated:
-            with open(STATS_PATH, "w", encoding="utf-8") as f:
-                json.dump(stats, f, indent=2, ensure_ascii=False)
-            log_message(f"✅ [signal_logger] Запис оновлено для trade_id={trade_id}")
-        else:
-            log_error(f"❌ [signal_logger] trade_id={trade_id} не знайдено для оновлення.")
+            # read
+            try:
+                with open(STATS_PATH, "r", encoding="utf-8") as f:
+                    stats = json.load(f)
+                if not isinstance(stats, list):
+                    stats = []
+            except Exception as e:
+                log_error(f"❌ [signal_logger] read error: {e}")
+                return False
+
+            # update strictly by trade_id
+            updated = False
+            for rec in stats:
+                if rec.get("trade_id") == trade_id:
+                    if isinstance(updates, dict):
+                        rec.update(updates)
+                    updated = True
+                    break
+
+            if not updated:
+                log_message(f"⚠️ [signal_logger] trade_id не знайдено: {trade_id}")
+                return False
+
+            # atomic write
+            try:
+                content = json.dumps(stats, indent=2, ensure_ascii=False)
+                dirn = os.path.dirname(STATS_PATH) or "."
+                with tempfile.NamedTemporaryFile("w", delete=False, encoding="utf-8",
+                                                 dir=dirn, prefix=".swap_", suffix=".json") as tmp:
+                    tmp.write(content)
+                    tmp_path = tmp.name
+                os.replace(tmp_path, STATS_PATH)
+            except Exception as e:
+                log_error(f"❌ [signal_logger] write error: {e}")
+                return False
+
+        log_message(f"✅ [signal_logger] Запис оновлено для trade_id={trade_id}")
+        return True
 
     except Exception as e:
         log_error(f"❌ [signal_logger] update_signal_record: помилка → {e}")
+        return False

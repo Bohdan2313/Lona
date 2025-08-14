@@ -9,7 +9,6 @@ from trading.executor import get_current_futures_price
 from utils.logger import log_message, log_error, log_debug
 from trading.executor import OrderExecutor
 from trading.risk import calculate_amount_to_use
-from ai.decision import calculate_trade_score
 from config import bybit
 is_trade_open = False
 import pandas as pd
@@ -40,6 +39,12 @@ from config import (PARTIAL_CLOSE_PERCENT, PARTIAL_CLOSE_TRIGGER,
 import random
 import numpy as np
 from utils.signal_logger import log_final_trade_result
+from uuid import uuid4
+ACTIVE_TRADES_FILE_SIMPLE = "data/ActiveTradesSimple.json"
+
+# === реєстри потоків ===
+active_threads = {}   # потоки конкретних угод (ключ = trade_id)
+bg_threads = {}       # фонові демони: monitor_all_open_trades, monitor_watchlist_candidate
 
 
 
@@ -490,18 +495,18 @@ def find_best_scalping_targets():
     try:
         log_message("🚦 Старт find_best_scalping_targets()")
 
-        # 🔄 Запуск фонових моніторів
-        if "monitor_all_open_trades" not in active_threads:
+        if "monitor_all_open_trades" not in bg_threads:
             t = threading.Thread(target=monitor_all_open_trades, daemon=True)
             t.start()
-            active_threads["monitor_all_open_trades"] = t
+            bg_threads["monitor_all_open_trades"] = t
             log_debug("monitor_all_open_trades запущено")
 
-        if "monitor_watchlist_candidate" not in active_threads:
+        if "monitor_watchlist_candidate" not in bg_threads:
             t = threading.Thread(target=monitor_watchlist_candidate, daemon=True)
             t.start()
-            active_threads["monitor_watchlist_candidate"] = t
+            bg_threads["monitor_watchlist_candidate"] = t
             log_debug("monitor_watchlist_candidate запущено")
+
 
         symbols = get_top_symbols(limit=50)
         random.shuffle(symbols)
@@ -614,6 +619,8 @@ def find_best_scalping_targets():
 def execute_scalping_trade(target, balance, position_side, behavior_summary, manual_amount=None, manual_leverage=None):
     """
     🚀 Виконує реальну угоду, записує сигнал при відкритті та віддає monitor_all_open_trades у контроль
+    - Без calculate_trade_score
+    - Без дубль-перевірок правил (фільтр уже в find_best_scalping_targets / watchlist)
     """
     try:
         symbol = target["symbol"]
@@ -642,39 +649,55 @@ def execute_scalping_trade(target, balance, position_side, behavior_summary, man
                 return str(obj)
 
         try:
-            # 🔁 фолбек балансу (на випадок, якщо викликали з balance=None)
+            # 🔁 фолбек балансу
             if balance is None:
                 balance = get_usdt_balance()
 
-            # ✅ Перевірка чи монета вже моніториться (можеш лишити як додатковий запобіжник)
-            if symbol in active_threads:
-                log_message(f"⚠️ {symbol} вже моніториться → пропуск")
-                return
-
-            # 🛡 Фінальна перевірка MAX_ACTIVE_TRADES перед відправкою ордера
+            # 🛡 ліміт активних угод
             active_trades = load_active_trades()
             if len(active_trades) >= MAX_ACTIVE_TRADES:
                 log_message(f"🛑 [SAFEGUARD] Перед відправкою ордера → вже відкрито {len(active_trades)} угод")
                 return
 
-            snapshot = build_monitor_snapshot(symbol)
-            if not snapshot:
-                log_error(f"❌ Snapshot для {symbol} не створено → пропуск")
+            # 🧭 напрямок
+            side_norm = (position_side or "").upper()
+            if side_norm == "LONG":
+                side = "Buy"
+            elif side_norm == "SHORT":
+                side = "Sell"
+            else:
+                log_error(f"❌ Невідомий напрямок position_side={position_side} → пропуск")
                 return
 
-            conditions = convert_snapshot_to_conditions(snapshot)
+            # 🧱 conditions: пріоритет — з behavior_summary["signals"], інакше — зібрати свіжі
+            conditions = None
+            if isinstance(behavior_summary, dict):
+                maybe_signals = behavior_summary.get("signals")
+                if isinstance(maybe_signals, dict) and maybe_signals:
+                    conditions = maybe_signals
+
             if not conditions:
-                log_error(f"❌ Conditions для {symbol} не створені → пропуск")
-                return
+                snapshot = build_monitor_snapshot(symbol)
+                if not snapshot:
+                    log_error(f"❌ Snapshot для {symbol} не створено → пропуск")
+                    return
+                conditions = convert_snapshot_to_conditions(snapshot)
+                if not conditions:
+                    log_error(f"❌ Conditions для {symbol} не створені → пропуск")
+                    return
 
-            score_data = calculate_trade_score(conditions, position_side=position_side)
-            score = score_data.get("score", 0)
-            signals = score_data.get("signals", {})
+            # 🎯 SCORE: беремо з behavior_summary або ставимо нейтральний дефолт
+            score = 0.0
+            if isinstance(behavior_summary, dict):
+                try:
+                    score = float(behavior_summary.get("score", 0.0) or 0.0)
+                except Exception:
+                    score = 0.0
+            if score == 0.0:
+                score = 6.0  # нейтральний дефолт, щоб amount не впав до нуля
 
-            log_message(f"🎯 Score={score} → відкриваємо реальну угоду")
-
+            # ⚙️ Плече та сума
             leverage = manual_leverage if manual_leverage is not None else (MANUAL_LEVERAGE if USE_MANUAL_LEVERAGE else 5)
-
             amount = (
                 manual_amount
                 if manual_amount is not None
@@ -684,26 +707,26 @@ def execute_scalping_trade(target, balance, position_side, behavior_summary, man
                 log_message(f"⚠️ Сума {amount} < $5 → встановлено $5")
                 amount = 5
 
-            # 🧭 Визначення напрямку угоди
-            if position_side.upper() == "LONG":
-                side = "Buy"
-            elif position_side.upper() == "SHORT":
-                side = "Sell"
-            else:
-                log_error(f"❌ Невідомий напрямок position_side={position_side} → пропуск")
-                return
+            # 🎯 Цільова ціна
+            target_price = target.get("target_price")
+            if target_price is None:
+                target_price = (
+                    conditions.get("price")
+                    or conditions.get("current_price")
+                    or get_current_futures_price(symbol)
+                )
 
             log_message(
                 f"📤 Відправка ордера: {symbol} | Сума: {amount} | "
-                f"Плече: {leverage} | Side: {side} | PositionSide: {position_side.upper()}"
+                f"Плече: {leverage} | Side: {side} | PositionSide: {side_norm}"
             )
 
             executor = OrderExecutor(
                 symbol=symbol,
                 side=side,
                 amount_to_use=amount,
-                target_price=target.get("target_price"),
-                position_side=position_side.upper(),
+                target_price=target_price,
+                position_side=side_norm,
                 leverage=leverage,
                 bypass_price_check=True
             )
@@ -715,26 +738,35 @@ def execute_scalping_trade(target, balance, position_side, behavior_summary, man
             entry_price = result["entry_price"]
             send_telegram_message(
                 f"🚀 <b>Угода відкрита:</b> {symbol}\n"
-                f"➡️ Напрямок: {position_side.upper()}\n"
+                f"➡️ Напрямок: {side_norm}\n"
                 f"💸 Сума: {amount}\n"
                 f"⚡ Плече: {leverage}x\n"
                 f"🎯 Ціна входу: {entry_price}\n"
-                f"📈 SCORE: {score}"
+                f"📈 SCORE: {round(score, 2)}"
             )
 
             log_message(f"✅ Ордер відкрито для {symbol} @ {entry_price}")
 
-            trade_id = f"{symbol}_{datetime.utcnow().strftime('%H%M%S')}"
+            # 🗃️ унікальний trade_id (мікросекунди + короткий UUID)
+            ts = datetime.utcnow().strftime('%Y%m%dT%H%M%S%f')
+            trade_id = f"{symbol}_{ts}_{uuid4().hex[:6]}"
+
+            decision_summary = {
+                "score": float(score),
+                "source": ("watchlist" if isinstance(behavior_summary, dict) and str(behavior_summary.get("entry_reason", "")).startswith("WATCHLIST") else "finbest"),
+                "note": "No TradeScore; amount derived from decision score/default",
+            }
+
             trade_record = {
                 "trade_id": trade_id,
                 "symbol": symbol,
-                "side": position_side.upper(),
+                "side": side_norm,
                 "entry_price": entry_price,
                 "amount": amount,
                 "leverage": leverage,
                 "opened": datetime.utcnow().isoformat(),
                 "closed": False,
-                "signals": make_json_safe(signals),
+                "signals": make_json_safe(decision_summary),
                 "conditions": make_json_safe(conditions),
                 "behavior_summary": make_json_safe(behavior_summary),
                 "result_percent": None,
@@ -745,19 +777,17 @@ def execute_scalping_trade(target, balance, position_side, behavior_summary, man
             }
 
             log_debug(f"Trade Record для {trade_id}: {json.dumps(trade_record, indent=2, ensure_ascii=False)}")
-            append_active_trade(trade_record)  # ✅ Запис у ActiveTrades (файл)
+            append_active_trade(trade_record)  # ✅ у ActiveTrades
 
-            # ✅ Запис сигналу у signal_stats.json
-            from utils.signal_logger import append_signal_record  # локальний імпорт, щоб не чіпати верх
+            # ✅ у signal_stats.json
+            from utils.signal_logger import append_signal_record
             append_signal_record(trade_record)
 
         finally:
-            # знімемо блокування символу у будь-якому випадку
             opening_symbols.discard(symbol)
 
     except Exception as e:
         log_error(f"❌ [execute_scalping_trade] Помилка: {e}\n{traceback.format_exc()}")
-
 
 
 def manage_open_trade(symbol, entry_price, side, amount, leverage, behavior_summary,
@@ -974,13 +1004,27 @@ def load_active_trades():
         return {}
 
 
-# Список активних потоків по символах
-active_threads = {}
+def resolve_trade_id(symbol: str, side: str) -> str | None:
+    """
+    Підхоплює наш локальний trade_id (той самий, що записали у signal_stats/ActiveTrades)
+    для пари symbol+side. Якщо не знайдено — повертає None.
+    """
+    try:
+        local_active = load_active_trades()  # очікуємо dict {trade_id: rec}
+        if isinstance(local_active, dict):
+            side_u = (side or "").upper()
+            for tid, rec in local_active.items():
+                if rec.get("symbol") == symbol and str(rec.get("side", "")).upper() == side_u:
+                    return tid
+    except Exception as e:
+        log_error(f"resolve_trade_id: {e}")
+    return None
+
 
 def monitor_all_open_trades():
     """
     🔄 Безперервно моніторить всі відкриті угоди напряму з біржі (Bybit API).
-    Синхронізує ActiveTrades.json у спрощеному форматі: symbol, side, opened_at.
+    ⚠️ Не перетирає повний ActiveTrades.json; спрощений стан пише в ACTIVE_TRADES_FILE_SIMPLE.
     """
     log_message("🚦 [DEBUG] Старт monitor_all_open_trades() (LIVE API)")
 
@@ -989,16 +1033,16 @@ def monitor_all_open_trades():
             symbol = trade.get("symbol")
             entry_price = trade.get("entry_price")
             side = trade.get("side", "LONG")
-            amount = trade.get("amount", 0)
+            amount = trade.get("amount", 0.0)
             leverage = trade.get("leverage", 10)
             summary = trade.get("behavior_summary", {})
             sessions = trade.get("monitoring_sessions", [])
 
-            log_message(f"👁 [DEBUG] Старт моніторингу угоди {symbol}")
+            log_message(f"👁 [DEBUG] Старт моніторингу угоди {trade_id} ({symbol})")
 
             manage_open_trade(
-            symbol, entry_price, side, amount, leverage, summary, trade_id, sessions
-        )
+                symbol, entry_price, side, amount, leverage, summary, trade_id, sessions
+            )
 
         except Exception as e:
             log_error(f"❌ monitor_trade_thread({trade_id}): {e}")
@@ -1008,18 +1052,17 @@ def monitor_all_open_trades():
 
     while True:
         try:
-            # 🛡️ Отримуємо всі відкриті позиції напряму з біржі
+            # 🛡️ Отримуємо всі відкриті позиції з біржі
             response = bybit.get_positions(category="linear", settleCoin="USDT")
-            positions = response.get("result", {}).get("list", [])
-            
-            # ⏳ Якщо API вернуло пусто, робимо ще 3 спроби перед оновленням ActiveTrades
-            retry_attempts = 3
-            if len(positions) == 0:
-                for attempt in range(1, retry_attempts + 1):
+            positions = response.get("result", {}).get("list", []) or []
+
+            # ⏳ Якщо пусто — кілька ретраїв
+            if not positions:
+                for attempt in range(1, 4):
                     time.sleep(2)
                     response = bybit.get_positions(category="linear", settleCoin="USDT")
-                    positions = response.get("result", {}).get("list", [])
-                    if len(positions) > 0:
+                    positions = response.get("result", {}).get("list", []) or []
+                    if positions:
                         log_debug(f"Позиції знайдено на спробі {attempt}")
                         break
 
@@ -1028,47 +1071,69 @@ def monitor_all_open_trades():
             current_time = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
 
             for pos in positions:
-                size = float(pos.get("size", 0))
-                if size > 0:
-                    symbol = pos.get("symbol")
+                try:
+                    size = float(pos.get("size", 0) or 0)
+                except Exception:
+                    size = 0.0
+                if size <= 0:
+                    continue
+
+                symbol = pos.get("symbol")
+                # Сторона: з positionSide або з side
+                raw_ps = str(pos.get("positionSide", "")).upper()
+                if raw_ps in ("LONG", "SHORT"):
+                    side = raw_ps
+                else:
+                    side = "LONG" if str(pos.get("side", "")).upper() == "BUY" else "SHORT"
+
+                # Ціна входу: використовуємо avgEntryPrice, фолбек на avgPrice
+                try:
+                    entry_price = float(pos.get("avgEntryPrice") or pos.get("avgPrice") or 0.0)
+                except Exception:
+                    entry_price = 0.0
+
+                # Плече
+                try:
+                    leverage = int(float(pos.get("leverage", 1)))
+                except Exception:
+                    leverage = 1
+
+                # 🔑 Спробувати підхопити наш локальний trade_id
+                trade_id = resolve_trade_id(symbol, side)
+                if not trade_id:
+                    # Резервний біржовий ідентифікатор (НЕ використовується для оновлення stats, тільки для ключа потоку)
                     trade_id = f"{symbol}_{pos.get('positionIdx', '0')}"
-                    entry_price = float(pos.get("avgPrice", 0))
-                    leverage = int(pos.get("leverage", 1))
-                    side = pos.get("positionSide", "").upper()
-                    if not side:
-                        side = "LONG" if pos.get("side", "").upper() == "BUY" else "SHORT"
 
+                live_trades[trade_id] = {
+                    "symbol": symbol,
+                    "entry_price": entry_price,
+                    "side": side,
+                    "amount": size,
+                    "leverage": leverage,
+                    "behavior_summary": {
+                        "entry_reason": "LIVE_MONITOR",
+                        "score": 0,
+                        "signals": {}
+                    },
+                    "monitoring_sessions": []
+                }
 
-                    live_trades[trade_id] = {
-                        "symbol": symbol,
-                        "entry_price": entry_price,
-                        "side": side,
-                        "amount": size,
-                        "leverage": leverage,
-                        "behavior_summary": {
-                            "entry_reason": "LIVE_MONITOR",
-                            "score": 0,
-                            "signals": {}
-                        },
-                        "monitoring_sessions": []
-                    }
+                # 📝 Спрощений запис (окремий файл, не чіпає повний ActiveTrades.json)
+                simple_trades[trade_id] = {
+                    "symbol": symbol,
+                    "side": side,
+                    "opened_at": current_time
+                }
 
-                    # 📝 Спрощений запис для ActiveTrades.json
-                    simple_trades[trade_id] = {
-                        "symbol": symbol,
-                        "side": side,
-                        "opened_at": current_time
-                    }
-
-            # 📦 Оновлюємо ActiveTrades.json (спрощений формат)
+            # 🔹 Пишемо спрощений файл окремо, щоб не зносити повні записи
             try:
-                with open(ACTIVE_TRADES_FILE, "w", encoding="utf-8") as f:
+                with open(ACTIVE_TRADES_FILE_SIMPLE, "w", encoding="utf-8") as f:
                     json.dump(simple_trades, f, indent=2, ensure_ascii=False)
-                log_debug(f"ActiveTrades.json оновлено ({len(simple_trades)} угод)")
+                log_debug(f"ActiveTradesSimple.json оновлено ({len(simple_trades)} угод)")
             except Exception as e:
-                log_error(f"❌ [monitor_all_open_trades] Помилка при записі ActiveTrades.json: {e}")
+                log_error(f"❌ [monitor_all_open_trades] Помилка при записі ActiveTradesSimple.json: {e}")
 
-            # 🚀 Стартуємо моніторинг для кожної угоди
+            # 🚀 Стартуємо моніторинг для кожної угоди (по нашому або резервному trade_id)
             for trade_id, trade in live_trades.items():
                 if trade_id not in active_threads:
                     log_debug(f"Запуск моніторингу для {trade_id} (API)")
@@ -1080,7 +1145,8 @@ def monitor_all_open_trades():
                     t.start()
                     active_threads[trade_id] = t
                 else:
-                    log_debug(f"{trade_id} вже моніториться")
+                    # вже моніториться — пропускаємо
+                    pass
 
         except Exception as e:
             log_error(f"❌ monitor_all_open_trades (API): {e}")

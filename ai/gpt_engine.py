@@ -17,7 +17,7 @@ def ask_gpt(prompt, system_prompt="", temperature=0.5, max_tokens=1000):
         messages.append({"role": "user", "content": prompt})
 
         response = client.chat.completions.create(
-            model="gpt-4",
+            model="gpt-5",
             messages=messages,
             temperature=temperature,
             max_tokens=max_tokens

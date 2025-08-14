@@ -1,0 +1,100 @@
+[
+  {
+    "symbol": "LDOUSDT",
+    "support_position": "between",
+    "current_price": 1.3982,
+    "time": "2025-08-14 17:33:39",
+    "side": "SHORT"
+  },
+  {
+    "symbol": "ENAUSDT",
+    "support_position": "between",
+    "current_price": 0.722,
+    "time": "2025-08-14 17:35:07",
+    "side": "SHORT"
+  },
+  {
+    "symbol": "DOGEUSDT",
+    "support_position": "between",
+    "current_price": 0.22371,
+    "time": "2025-08-14 17:35:56",
+    "side": "SHORT"
+  },
+  {
+    "symbol": "ADAUSDT",
+    "support_position": "between",
+    "current_price": 0.9077,
+    "time": "2025-08-14 17:36:10",
+    "side": "SHORT"
+  },
+  {
+    "symbol": "CRVUSDT",
+    "support_position": "between",
+    "current_price": 0.9237,
+    "time": "2025-08-14 17:37:41",
+    "side": "SHORT"
+  },
+  {
+    "symbol": "BCHUSDT",
+    "support_position": "near_resistance",
+    "current_price": 589.7,
+    "time": "2025-08-14 20:36:39",
+    "side": "SHORT"
+  },
+  {
+    "symbol": "XRPUSDT",
+    "support_position": "near_resistance",
+    "current_price": 3.0774,
+    "time": "2025-08-14 20:36:45",
+    "side": "SHORT"
+  },
+  {
+    "symbol": "TIAUSDT",
+    "support_position": "between",
+    "current_price": 1.766,
+    "time": "2025-08-14 20:36:53",
+    "side": "SHORT"
+  },
+  {
+    "symbol": "WLDUSDT",
+    "support_position": "between",
+    "current_price": 1.0026,
+    "time": "2025-08-14 20:37:30",
+    "side": "SHORT"
+  },
+  {
+    "symbol": "GALAUSDT",
+    "support_position": "between",
+    "current_price": 0.01667,
+    "time": "2025-08-14 20:37:47",
+    "side": "SHORT"
+  },
+  {
+    "symbol": "TRUMPUSDT",
+    "support_position": "between",
+    "current_price": 8.941,
+    "time": "2025-08-14 20:37:53",
+    "side": "SHORT"
+  },
+  {
+    "symbol": "DOTUSDT",
+    "support_position": "between",
+    "current_price": 3.981,
+    "time": "2025-08-14 20:38:42",
+    "side": "SHORT"
+  },
+  {
+    "symbol": "USELESSUSDT",
+    "support_position": "between",
+    "current_price": 0.2501,
+    "time": "2025-08-14 20:38:50",
+    "side": "SHORT"
+  },
+  {
+    "symbol": "SOLUSDT",
+    "support_position": "between",
+    "current_price": 191.76,
+    "time": "2025-08-14 20:40:41",
+    "side": "SHORT"
+  }
+]

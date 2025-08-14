@@ -1,0 +1,426 @@
+{
+  "LTCUSDT": {
+    "trade_id": "LTCUSDT_20250814T203602154070_cd74ce",
+    "symbol": "LTCUSDT",
+    "side": "SHORT",
+    "entry_price": 121.9,
+    "amount": 6,
+    "leverage": 10,
+    "opened": "2025-08-14T20:36:02.154070",
+    "closed": false,
+    "signals": {
+      "score": 6.0,
+      "source": "watchlist",
+      "note": "No TradeScore; amount derived from decision score/default"
+    },
+    "conditions": {
+      "symbol": "LTCUSDT",
+      "trend": "bearish",
+      "macd_trend": "bullish",
+      "macd_score": 2.94,
+      "macd_hist_direction": "down",
+      "macd_crossed": "none",
+      "atr_level": 0.8487,
+      "atr_score": 0.7,
+      "rsi_signal": "neutral",
+      "rsi_value": 46.82,
+      "rsi_trend": "up",
+      "rsi_score": 0.0,
+      "rsi_divergence": {
+        "state": "none",
+        "score": 0.0
+      },
+      "rsi_divergence_score": 0.0,
+      "cci_signal": "neutral",
+      "cci_value": 92.04,
+      "cci_score": 0.0,
+      "stoch_signal": "overbought",
+      "stoch_k": 85.53,
+      "stoch_d": 83.14,
+      "stoch_score": -3.0,
+      "bollinger_signal": "bullish_momentum",
+      "bollinger_position": 84.76,
+      "bollinger_width": 1.0241,
+      "bollinger_score": 1.5,
+      "support": 119.44,
+      "resistance": 123.16,
+      "support_position": "near_resistance",
+      "support_resistance_score": -6.0,
+      "volume_category": {
+        "volume_analysis": {
+          "level": "low",
+          "method": "standard",
+          "raw_values": {
+            "current_volume": 38920.4,
+            "average_volume": 110083.45,
+            "ratio": 0.3536
+          }
+        }
+      },
+      "global_trend": "bearish",
+      "lstm_prediction": -19.09485626220703,
+      "proximity_to_high": 0.9993,
+      "whale_score": 0,
+      "news_sentiment": "unknown",
+      "volatility_pct": 0.42,
+      "volatility_level": "very_low",
+      "volatility_score": -5.0,
+      "volatility": 1.35,
+      "microtrend_1m": "NEUTRAL",
+      "microtrend_1m_score": 0.0,
+      "microtrend_5m": "strong_bullish",
+      "microtrend_5m_score": 0.0,
+      "patterns": [
+        {
+          "type": "engulfing",
+          "direction": "bearish",
+          "index": 37,
+          "quality": 7.13
+        }
+      ],
+      "pattern_score": 7.13,
+      "delta_1m": 0.0,
+      "delta_5m": 0.0,
+      "health_ok": true,
+      "health_reason": "ok",
+      "current_price": 121.9,
+      "price": 121.9,
+      "last_candle": {
+        "timestamp": "2025-08-14T20:36:00",
+        "open": 121.9,
+        "high": 121.9,
+        "low": 121.9,
+        "close": 121.9,
+        "volume": 0.0,
+        "turnover": "0"
+      },
+      "prev_candle": {
+        "timestamp": "2025-08-14T20:35:00",
+        "open": 121.98,
+        "high": 121.98,
+        "low": 121.86,
+        "close": 121.9,
+        "volume": 549.2,
+        "turnover": "66948.42"
+      }
+    },
+    "behavior_summary": {
+      "entry_reason": "WATCHLIST_TRIGGER_SHORT",
+      "signals": {
+        "symbol": "LTCUSDT",
+        "trend": "bearish",
+        "macd_trend": "bullish",
+        "macd_score": 2.94,
+        "macd_hist_direction": "down",
+        "macd_crossed": "none",
+        "atr_level": 0.8487,
+        "atr_score": 0.7,
+        "rsi_signal": "neutral",
+        "rsi_value": 46.82,
+        "rsi_trend": "up",
+        "rsi_score": 0.0,
+        "rsi_divergence": {
+          "state": "none",
+          "score": 0.0
+        },
+        "rsi_divergence_score": 0.0,
+        "cci_signal": "neutral",
+        "cci_value": 92.04,
+        "cci_score": 0.0,
+        "stoch_signal": "overbought",
+        "stoch_k": 85.53,
+        "stoch_d": 83.14,
+        "stoch_score": -3.0,
+        "bollinger_signal": "bullish_momentum",
+        "bollinger_position": 84.76,
+        "bollinger_width": 1.0241,
+        "bollinger_score": 1.5,
+        "support": 119.44,
+        "resistance": 123.16,
+        "support_position": "near_resistance",
+        "support_resistance_score": -6.0,
+        "volume_category": {
+          "volume_analysis": {
+            "level": "low",
+            "method": "standard",
+            "raw_values": {
+              "current_volume": 38920.4,
+              "average_volume": 110083.45,
+              "ratio": 0.3536
+            }
+          }
+        },
+        "global_trend": "bearish",
+        "lstm_prediction": -19.09485626220703,
+        "proximity_to_high": 0.9993,
+        "whale_score": 0,
+        "news_sentiment": "unknown",
+        "volatility_pct": 0.42,
+        "volatility_level": "very_low",
+        "volatility_score": -5.0,
+        "volatility": 1.35,
+        "microtrend_1m": "NEUTRAL",
+        "microtrend_1m_score": 0.0,
+        "microtrend_5m": "strong_bullish",
+        "microtrend_5m_score": 0.0,
+        "patterns": [
+          {
+            "type": "engulfing",
+            "direction": "bearish",
+            "index": 37,
+            "quality": 7.13
+          }
+        ],
+        "pattern_score": 7.13,
+        "delta_1m": 0.0,
+        "delta_5m": 0.0,
+        "health_ok": true,
+        "health_reason": "ok",
+        "current_price": 121.9,
+        "price": 121.9,
+        "last_candle": {
+          "timestamp": "2025-08-14T20:36:00",
+          "open": 121.9,
+          "high": 121.9,
+          "low": 121.9,
+          "close": 121.9,
+          "volume": 0.0,
+          "turnover": "0"
+        },
+        "prev_candle": {
+          "timestamp": "2025-08-14T20:35:00",
+          "open": 121.98,
+          "high": 121.98,
+          "low": 121.86,
+          "close": 121.9,
+          "volume": 549.2,
+          "turnover": "66948.42"
+        }
+      },
+      "volume": null
+    },
+    "result_percent": null,
+    "peak_pnl_percent": null,
+    "worst_pnl_percent": null,
+    "exit_reason": null,
+    "duration": null
+  },
+  "PENGUUSDT": {
+    "trade_id": "PENGUUSDT_20250814T203603918706_729e5a",
+    "symbol": "PENGUUSDT",
+    "side": "SHORT",
+    "entry_price": 0.032991,
+    "amount": 6,
+    "leverage": 10,
+    "opened": "2025-08-14T20:36:03.918706",
+    "closed": false,
+    "signals": {
+      "score": 6.0,
+      "source": "watchlist",
+      "note": "No TradeScore; amount derived from decision score/default"
+    },
+    "conditions": {
+      "symbol": "PENGUUSDT",
+      "trend": "bearish",
+      "macd_trend": "bullish",
+      "macd_score": 0.0,
+      "macd_hist_direction": "up",
+      "macd_crossed": "none",
+      "atr_level": 0.0003,
+      "atr_score": 0.98,
+      "rsi_signal": "neutral",
+      "rsi_value": 40.54,
+      "rsi_trend": "up",
+      "rsi_score": 0.0,
+      "rsi_divergence": {
+        "state": "none",
+        "score": 0.0
+      },
+      "rsi_divergence_score": 0.0,
+      "cci_signal": "neutral",
+      "cci_value": 11.49,
+      "cci_score": 0.0,
+      "stoch_signal": "bullish_momentum",
+      "stoch_k": 56.49,
+      "stoch_d": 51.97,
+      "stoch_score": 1.5,
+      "bollinger_signal": "bullish_momentum",
+      "bollinger_position": 76.46,
+      "bollinger_width": 0.0004,
+      "bollinger_score": 1.5,
+      "support": 0.032431,
+      "resistance": 0.033644,
+      "support_position": "between",
+      "support_resistance_score": 0.0,
+      "volume_category": {
+        "volume_analysis": {
+          "level": "low",
+          "method": "standard",
+          "raw_values": {
+            "current_volume": 52935490.0,
+            "average_volume": 271355937.5,
+            "ratio": 0.1951
+          }
+        }
+      },
+      "global_trend": "bearish",
+      "lstm_prediction": 3.1424407958984375,
+      "proximity_to_high": 0.9986,
+      "whale_score": 0,
+      "news_sentiment": "unknown",
+      "volatility_pct": 0.44,
+      "volatility_level": "very_low",
+      "volatility_score": -5.0,
+      "volatility": 2.21,
+      "microtrend_1m": "NEUTRAL",
+      "microtrend_1m_score": 0.0,
+      "microtrend_5m": "strong_bullish",
+      "microtrend_5m_score": 0.0,
+      "patterns": [
+        {
+          "type": "engulfing",
+          "direction": "bullish",
+          "index": 38,
+          "quality": 7.56
+        },
+        {
+          "type": "hammer",
+          "direction": "bullish",
+          "index": 35,
+          "quality": 4.69
+        }
+      ],
+      "pattern_score": 12.25,
+      "delta_1m": 0.0,
+      "delta_5m": 0.0,
+      "health_ok": true,
+      "health_reason": "ok",
+      "current_price": 0.032994,
+      "price": 0.032994,
+      "last_candle": {
+        "timestamp": "2025-08-14T20:36:00",
+        "open": 0.032994,
+        "high": 0.032997,
+        "low": 0.032991,
+        "close": 0.032991,
+        "volume": 83050,
+        "turnover": "2740.14821"
+      },
+      "prev_candle": {
+        "timestamp": "2025-08-14T20:35:00",
+        "open": 0.03304,
+        "high": 0.033041,
+        "low": 0.032991,
+        "close": 0.032994,
+        "volume": 702700,
+        "turnover": "23193.64413"
+      }
+    },
+    "behavior_summary": {
+      "entry_reason": "WATCHLIST_TRIGGER_SHORT",
+      "signals": {
+        "symbol": "PENGUUSDT",
+        "trend": "bearish",
+        "macd_trend": "bullish",
+        "macd_score": 0.0,
+        "macd_hist_direction": "up",
+        "macd_crossed": "none",
+        "atr_level": 0.0003,
+        "atr_score": 0.98,
+        "rsi_signal": "neutral",
+        "rsi_value": 40.54,
+        "rsi_trend": "up",
+        "rsi_score": 0.0,
+        "rsi_divergence": {
+          "state": "none",
+          "score": 0.0
+        },
+        "rsi_divergence_score": 0.0,
+        "cci_signal": "neutral",
+        "cci_value": 11.49,
+        "cci_score": 0.0,
+        "stoch_signal": "bullish_momentum",
+        "stoch_k": 56.49,
+        "stoch_d": 51.97,
+        "stoch_score": 1.5,
+        "bollinger_signal": "bullish_momentum",
+        "bollinger_position": 76.46,
+        "bollinger_width": 0.0004,
+        "bollinger_score": 1.5,
+        "support": 0.032431,
+        "resistance": 0.033644,
+        "support_position": "between",
+        "support_resistance_score": 0.0,
+        "volume_category": {
+          "volume_analysis": {
+            "level": "low",
+            "method": "standard",
+            "raw_values": {
+              "current_volume": 52935490.0,
+              "average_volume": 271355937.5,
+              "ratio": 0.1951
+            }
+          }
+        },
+        "global_trend": "bearish",
+        "lstm_prediction": 3.1424407958984375,
+        "proximity_to_high": 0.9986,
+        "whale_score": 0,
+        "news_sentiment": "unknown",
+        "volatility_pct": 0.44,
+        "volatility_level": "very_low",
+        "volatility_score": -5.0,
+        "volatility": 2.21,
+        "microtrend_1m": "NEUTRAL",
+        "microtrend_1m_score": 0.0,
+        "microtrend_5m": "strong_bullish",
+        "microtrend_5m_score": 0.0,
+        "patterns": [
+          {
+            "type": "engulfing",
+            "direction": "bullish",
+            "index": 38,
+            "quality": 7.56
+          },
+          {
+            "type": "hammer",
+            "direction": "bullish",
+            "index": 35,
+            "quality": 4.69
+          }
+        ],
+        "pattern_score": 12.25,
+        "delta_1m": 0.0,
+        "delta_5m": 0.0,
+        "health_ok": true,
+        "health_reason": "ok",
+        "current_price": 0.032994,
+        "price": 0.032994,
+        "last_candle": {
+          "timestamp": "2025-08-14T20:36:00",
+          "open": 0.032994,
+          "high": 0.032997,
+          "low": 0.032991,
+          "close": 0.032991,
+          "volume": 83050,
+          "turnover": "2740.14821"
+        },
+        "prev_candle": {
+          "timestamp": "2025-08-14T20:35:00",
+          "open": 0.03304,
+          "high": 0.033041,
+          "low": 0.032991,
+          "close": 0.032994,
+          "volume": 702700,
+          "turnover": "23193.64413"
+        }
+      },
+      "volume": null
+    },
+    "result_percent": null,
+    "peak_pnl_percent": null,
+    "worst_pnl_percent": null,
+    "exit_reason": null,
+    "duration": null
+  }
+}

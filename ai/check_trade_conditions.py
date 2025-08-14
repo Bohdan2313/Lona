@@ -204,8 +204,8 @@ SHORT_PAIRS: List[Pair] = [
 
 W_CORE = 1.0
 W_PAIR = 2.0
-THRESH_LONG = 4.0
-THRESH_SHORT = 4.0
+THRESH_LONG = 6.0
+THRESH_SHORT = 6.0
 
 
 def _has(c: Dict[str, Any], k: str, v: str) -> bool:

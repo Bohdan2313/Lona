@@ -1,5 +1,6 @@
 # scalping.py
 
+from trading.executor import round_qty_bybit
 import time
 from analysis.indicators import get_volatility,analyze_support_resistance
 import traceback
@@ -34,12 +35,14 @@ from analysis.monitor_coin_behavior import convert_snapshot_to_conditions
 from utils.signal_logger import update_signal_record
 from trading.executor import OrderExecutor
 from ai.decision import check_trade_conditions_long, check_trade_conditions_short
-from config import (PARTIAL_CLOSE_PERCENT, PARTIAL_CLOSE_TRIGGER,
-                        TRAILING_STOP_OFFSET, MANAGE_TP_PERCENT, MANAGE_SL_PERCENT)
 import random
 import numpy as np
 from utils.signal_logger import log_final_trade_result
 from uuid import uuid4
+from utils.logger import mark_trade_closed, remove_active_trade, prune_inactive_trades, _at_safe_load
+
+
+
 ACTIVE_TRADES_FILE_SIMPLE = "data/ActiveTradesSimple.json"
 
 # === реєстри потоків ===
@@ -55,6 +58,152 @@ opening_symbols = set()
 
 
 RECENT_SCALPING_FILE = "data/recent_scalping.json"
+
+# ===================== COMPAT / ADAPTER LAYER =====================
+# Все нижче — безпечні адаптери під твій OrderExecutor + Bybit клієнт.
+# Вони знімають помилки "is not defined" і працюють з твоїм API.
+
+# -- helpers
+def _symbol_clean(s: str) -> str:
+    return str(s).split("_")[0]
+
+# ---- ActiveTrades accessors -------------------------------------------------
+def get_active_trade(trade_id: str):
+    """
+    Повертає один трейд з load_active_trades() (який у тебе вже є).
+    """
+    try:
+        trades = load_active_trades() or {}
+        if isinstance(trades, dict):
+            return trades.get(trade_id)
+        elif isinstance(trades, list):
+            for t in trades:
+                if isinstance(t, dict) and t.get("trade_id") == trade_id:
+                    return t
+    except Exception as e:
+        log_error(f"[compat] get_active_trade error: {e}")
+    return None
+
+def update_active_trade(trade_id: str, patch: dict):
+    """
+    Акуратно оновлює запис у ActiveTrades: якщо є утиліти mark/remove/append — користуємось ними.
+    Інакше — робимо ручний фолбек (видалити + додати назад).
+    """
+    try:
+        current = get_active_trade(trade_id)
+        if not current:
+            log_message(f"[compat] update_active_trade: {trade_id} not found (noop)")
+            return False
+        current.update(patch or {})
+        # якщо є прямий апдейтер у utils.logger — спробуємо ним
+        try:
+            from utils.logger import update_active_trade as _real_upd  # type: ignore
+            _real_upd(trade_id, current)
+            return True
+        except Exception:
+            pass
+        # фолбек: remove -> append
+        if 'remove_active_trade' in globals():
+            try: remove_active_trade(trade_id)
+            except Exception: pass
+        if 'append_active_trade' in globals():
+            try: append_active_trade(current)
+            except Exception: pass
+        return True
+    except Exception as e:
+        log_error(f"[compat] update_active_trade fallback error: {e}")
+        return False
+
+def place_or_update_tp(symbol: str, side: str, quantity: float, avg_entry: float, tp_from_avg_pct: float):
+    """
+    Якщо USE_EXCHANGE_TP=False — нічого не робимо (bot-only).
+    Якщо True — ставимо ReduceOnly Limit (IOC/PostOnly) з підгонкою qty.
+    """
+    try:
+        from config import USE_EXCHANGE_TP, TP_USE_IOC
+    except Exception:
+        USE_EXCHANGE_TP, TP_USE_IOC = False, False
+
+    if not USE_EXCHANGE_TP:
+        return None  # bot-only режим
+
+    # --- далі код якщо колись увімкнеш біржовий TP ---
+    symbol_clean = symbol.split("_")[0]
+    side_u = side.upper()
+    is_long = side_u in ("LONG","BUY")
+    tp_price = float(avg_entry) * (1.0 + tp_from_avg_pct if is_long else 1.0 - tp_from_avg_pct)
+    close_side = "Sell" if is_long else "Buy"
+    pos_side   = "LONG" if is_long else "SHORT"
+
+    rounded_qty = round_qty_bybit(symbol_clean, float(quantity))
+    tif = "IOC" if TP_USE_IOC else "PostOnly"
+
+    resp = bybit.place_order(
+        category="linear",
+        symbol=symbol_clean,
+        side=close_side,
+        positionSide=pos_side,
+        orderType="Limit",
+        qty=str(rounded_qty),
+        price=str(tp_price),
+        reduceOnly=True,
+        timeInForce=tif
+    )
+    if resp.get("retCode") == 0:
+        oid = resp.get("result", {}).get("orderId")
+        log_message(f"🎯 [TP] {symbol_clean} {side_u} qty={rounded_qty} @ {tp_price:.6f} (orderId={oid})")
+        return oid
+    else:
+        log_error(f"⚠️ [TP] Bybit error: {resp}")
+        return None
+
+
+# ---- Liq buffer check (консервативно) --------------------------------------
+def has_liq_buffer_after_add(symbol: str, side: str, extra_qty: float, min_buffer: float, leverage: int):
+    """
+    Оцінює запас до ліквідації ПОТОЧНОЇ позиції і порівнює з порогом.
+    Якщо Bybit віддає liqPrice — використовуємо її; якщо ні, робимо м'який True.
+    """
+    try:
+        symbol_clean = _symbol_clean(symbol)
+        resp = bybit.get_positions(category="linear", symbol=symbol_clean)
+        lst = resp.get("result", {}).get("list", [])
+        if not lst:
+            log_message("[compat] has_liq_buffer_after_add: no positions → True")
+            return True
+
+        mark_price = float(get_current_futures_price(symbol_clean) or 0.0)
+        if mark_price <= 0:
+            return True
+
+        side_u = side.upper()
+        # беремо першу релевантну позицію
+        for pos in lst:
+            size = float(pos.get("size", 0) or 0)
+            if size <= 0: 
+                continue
+            pos_side = str(pos.get("side", "")).upper()  # BUY / SELL
+            if (side_u in ("LONG","BUY") and pos_side != "BUY") or (side_u in ("SHORT","SELL") and pos_side != "SELL"):
+                continue
+            liq = pos.get("liqPrice") or pos.get("liq_price") or pos.get("liqPrice_e")
+            if liq is None:
+                # нема точного ліквіда, не блочимо
+                log_message("[compat] liqPrice not available → allow add (permissive)")
+                return True
+            liq = float(liq)
+            if side_u in ("LONG","BUY"):
+                buf = (mark_price - liq) / mark_price
+            else:
+                buf = (liq - mark_price) / mark_price
+            ok = (buf >= float(min_buffer))
+            log_message(f"[compat] has_liq_buffer_after_add: buf={buf:.3f} vs min={min_buffer:.3f} → {ok}")
+            return ok
+
+        return True
+    except Exception as e:
+        log_error(f"[compat] has_liq_buffer_after_add error: {e}")
+        return True
+
 
 def quick_scan_coin(symbol: str) -> dict | None:
     """
@@ -472,7 +621,7 @@ def monitor_watchlist_candidate():
             time.sleep(MONITOR_INTERVAL)
             continue
 
-        with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
             futures = [executor.submit(process_candidate, item) for item in watchlist]
             results = [f.result() for f in futures]
             to_remove = [sym for sym in results if sym]
@@ -508,7 +657,7 @@ def find_best_scalping_targets():
             log_debug("monitor_watchlist_candidate запущено")
 
 
-        symbols = get_top_symbols(limit=50)
+        symbols = get_top_symbols(limit=20)
         random.shuffle(symbols)
         log_debug(f"Монети для аналізу: {symbols}")
 
@@ -618,9 +767,9 @@ def find_best_scalping_targets():
 
 def execute_scalping_trade(target, balance, position_side, behavior_summary, manual_amount=None, manual_leverage=None):
     """
-    🚀 Виконує реальну угоду, записує сигнал при відкритті та віддає monitor_all_open_trades у контроль
-    - Без calculate_trade_score
-    - Без дубль-перевірок правил (фільтр уже в find_best_scalping_targets / watchlist)
+    🚀 Відкрити реальну угоду та ініціалізувати Smart Averaging (DCA)
+    - НІЯКИХ дублюючих біржових функцій у цьому файлі
+    - Всі біржові дії — тільки через executor.OrderExecutor
     """
     try:
         symbol = target["symbol"]
@@ -669,7 +818,7 @@ def execute_scalping_trade(target, balance, position_side, behavior_summary, man
                 log_error(f"❌ Невідомий напрямок position_side={position_side} → пропуск")
                 return
 
-            # 🧱 conditions: пріоритет — з behavior_summary["signals"], інакше — зібрати свіжі
+            # 🧱 signals/conditions
             conditions = None
             if isinstance(behavior_summary, dict):
                 maybe_signals = behavior_summary.get("signals")
@@ -686,7 +835,7 @@ def execute_scalping_trade(target, balance, position_side, behavior_summary, man
                     log_error(f"❌ Conditions для {symbol} не створені → пропуск")
                     return
 
-            # 🎯 SCORE: беремо з behavior_summary або ставимо нейтральний дефолт
+            # 🎯 SCORE → тільки для sizing
             score = 0.0
             if isinstance(behavior_summary, dict):
                 try:
@@ -694,10 +843,19 @@ def execute_scalping_trade(target, balance, position_side, behavior_summary, man
                 except Exception:
                     score = 0.0
             if score == 0.0:
-                score = 6.0  # нейтральний дефолт, щоб amount не впав до нуля
+                score = 6.0  # нейтральний дефолт
 
-            # ⚙️ Плече та сума
-            leverage = manual_leverage if manual_leverage is not None else (MANUAL_LEVERAGE if USE_MANUAL_LEVERAGE else 5)
+            # ⚙️ плечe/сума
+            try:
+                from config import SMART_AVG
+            except Exception:
+                SMART_AVG = {}
+
+            leverage = (
+                manual_leverage
+                if manual_leverage is not None
+                else (MANUAL_LEVERAGE if USE_MANUAL_LEVERAGE else SMART_AVG.get("leverage", 5))
+            )
             amount = (
                 manual_amount
                 if manual_amount is not None
@@ -717,10 +875,11 @@ def execute_scalping_trade(target, balance, position_side, behavior_summary, man
                 )
 
             log_message(
-                f"📤 Відправка ордера: {symbol} | Сума: {amount} | "
+                f"📤 Відправка ордера: {symbol} | Сума(маржа): {amount} | "
                 f"Плече: {leverage} | Side: {side} | PositionSide: {side_norm}"
             )
 
+            # ❗ Всі біржові дії — через OrderExecutor
             executor = OrderExecutor(
                 symbol=symbol,
                 side=side,
@@ -735,19 +894,23 @@ def execute_scalping_trade(target, balance, position_side, behavior_summary, man
                 log_error(f"❌ Ордер не відкрився для {symbol}")
                 return
 
-            entry_price = result["entry_price"]
+            entry_price = float(result["entry_price"])
+            # Якщо executor не повертає qty — оцінюємо (для внутр. стейту DCA)
+            filled_qty = float(result.get("quantity") or 0.0)
+            if filled_qty <= 0:
+                filled_qty = amount * leverage / entry_price
+
             send_telegram_message(
                 f"🚀 <b>Угода відкрита:</b> {symbol}\n"
                 f"➡️ Напрямок: {side_norm}\n"
-                f"💸 Сума: {amount}\n"
+                f"💸 Сума (маржа): {amount}\n"
                 f"⚡ Плече: {leverage}x\n"
                 f"🎯 Ціна входу: {entry_price}\n"
                 f"📈 SCORE: {round(score, 2)}"
             )
-
             log_message(f"✅ Ордер відкрито для {symbol} @ {entry_price}")
 
-            # 🗃️ унікальний trade_id (мікросекунди + короткий UUID)
+            # 🗃️ trade_id
             ts = datetime.utcnow().strftime('%Y%m%dT%H%M%S%f')
             trade_id = f"{symbol}_{ts}_{uuid4().hex[:6]}"
 
@@ -757,12 +920,34 @@ def execute_scalping_trade(target, balance, position_side, behavior_summary, man
                 "note": "No TradeScore; amount derived from decision score/default",
             }
 
+            # ====================== SMART AVERAGING (DCA) INIT ======================
+            dca_enabled = bool(SMART_AVG.get("enabled", True))
+            max_adds = int(SMART_AVG.get("max_adds", 5))
+            dca_step_pct = float(SMART_AVG.get("dca_step_pct", 0.045))
+            dca_mode = str(SMART_AVG.get("dca_mode", "equal"))
+            dca_factor = float(SMART_AVG.get("dca_factor", 1.2))
+            tp_from_avg_pct = float(SMART_AVG.get("tp_from_avg_pct", 0.01))
+            alt_tp_from_avg_pct = float(SMART_AVG.get("alt_tp_from_avg_pct", 0.02))
+            max_margin_per_trade = float(SMART_AVG.get("max_margin_per_trade", 600.0))
+            min_liq_buffer = float(SMART_AVG.get("min_liq_buffer", 0.40))
+            atr_pause_pct = float(SMART_AVG.get("atr_pause_pct", 0.10))
+            trend_flip_cut_pct = float(SMART_AVG.get("trend_flip_cut_pct", 0.40))
+            cooldown_min = int(SMART_AVG.get("cooldown_min", 20))
+
+            avg_entry = entry_price
+            adds_done = 0
+            total_margin_used = float(amount)
+            total_qty = filled_qty
+
+            # Перший TP (для логіки; біржу не чіпаємо)
+            tp_price = avg_entry * (1.0 + tp_from_avg_pct) if side_norm == "LONG" else avg_entry * (1.0 - tp_from_avg_pct)
+
             trade_record = {
                 "trade_id": trade_id,
                 "symbol": symbol,
                 "side": side_norm,
                 "entry_price": entry_price,
-                "amount": amount,
+                "amount": amount,                 # стартова маржа
                 "leverage": leverage,
                 "opened": datetime.utcnow().isoformat(),
                 "closed": False,
@@ -773,15 +958,43 @@ def execute_scalping_trade(target, balance, position_side, behavior_summary, man
                 "peak_pnl_percent": None,
                 "worst_pnl_percent": None,
                 "exit_reason": None,
-                "duration": None
+                "duration": None,
+
+                # >>> DCA state <<<
+                "smart_avg": {
+                    "enabled": dca_enabled,
+                    "avg_entry": avg_entry,
+                    "adds_done": adds_done,
+                    "max_adds": max_adds,
+                    "dca_step_pct": dca_step_pct,
+                    "dca_mode": dca_mode,
+                    "dca_factor": dca_factor,
+                    "tp_from_avg_pct": tp_from_avg_pct,
+                    "alt_tp_from_avg_pct": alt_tp_from_avg_pct,
+                    "tp_price": tp_price,
+                    "tp_order_id": None,  # біржовий TP не ставимо (bot-only)
+                    "total_margin_used": total_margin_used,
+                    "total_qty": total_qty,
+                    "max_margin_per_trade": max_margin_per_trade,
+                    "min_liq_buffer": min_liq_buffer,
+                    "atr_pause_pct": atr_pause_pct,
+                    "trend_flip_cut_pct": trend_flip_cut_pct,
+                    "cooldown_min": cooldown_min
+                }
             }
 
-            log_debug(f"Trade Record для {trade_id}: {json.dumps(trade_record, indent=2, ensure_ascii=False)}")
-            append_active_trade(trade_record)  # ✅ у ActiveTrades
+            # ✅ активні трейди + лог
+            from utils.logger import append_active_trade
+            append_active_trade(trade_record)
 
-            # ✅ у signal_stats.json
             from utils.signal_logger import append_signal_record
             append_signal_record(trade_record)
+
+            try:
+                if 'update_active_trade' in globals():
+                    update_active_trade(trade_id, trade_record)
+            except Exception:
+                pass
 
         finally:
             opening_symbols.discard(symbol)
@@ -792,67 +1005,154 @@ def execute_scalping_trade(target, balance, position_side, behavior_summary, man
 
 def manage_open_trade(symbol, entry_price, side, amount, leverage, behavior_summary,
                       trade_id=None, sessions=None, check_interval=1, entry_time=None, signals=None):
-
     """
-    👁 Розширений моніторинг відкритої угоди:
-    - Стандартний TP/SL
-    - Часткове закриття на піку
-    - Трейлінг-стоп для залишку
+    👁 Smart Averaging (DCA) моніторинг відкритої угоди — BOT-ONLY TP:
+    - Без SL.
+    - TP рахується від СЕРЕДНЬОЇ (avg_entry) на +tp_from_avg_pct (LONG) / -tp_from_avg_pct (SHORT)
+    - Докупки по кроку dca_step_pct від avg_entry з перерахунком середньої та пересуванням TP
+    - Ніяких прямых bybit-викликів у цьому файлі — лише OrderExecutor з executor.py
     """
-    
-    log_message(f"👁 [DEBUG] Старт manage_open_trade для {symbol} ({side}) @ {entry_price}")
+    log_message(f"👁 [DCA] Старт manage_open_trade для {symbol} ({side}) @ {entry_price}")
 
-    symbol_clean = symbol.split("_")[0]
+    symbol_clean = str(symbol).split("_")[0]
     if entry_time is None:
         entry_time = datetime.now()
 
     is_long = side.upper() in ["LONG", "BUY"]
     entry_price = Decimal(str(entry_price))
-    tp_target = Decimal(str(MANAGE_TP_PERCENT))
-    sl_target = Decimal(str(MANAGE_SL_PERCENT))
 
-    if is_long:
-        take_profit = entry_price * (Decimal("1") + tp_target / Decimal(leverage))
-        stop_loss = entry_price * (Decimal("1") - sl_target / Decimal(leverage))
-    else:
-        take_profit = entry_price * (Decimal("1") - tp_target / Decimal(leverage))
-        stop_loss = entry_price * (Decimal("1") + sl_target / Decimal(leverage))
+    # ===== Конфіг =====
+    try:
+        from config import SMART_AVG, TP_EPSILON, USE_EXCHANGE_TP
+    except Exception:
+        SMART_AVG = {}
+        TP_EPSILON = 0.0007
+        USE_EXCHANGE_TP = False  # за замовчуванням — BOT-only
 
-    log_message(f"🎯 TP={take_profit:.4f}, SL={stop_loss:.4f}")
+    dca_enabled           = bool(SMART_AVG.get("enabled", True))
+    base_margin           = float(SMART_AVG.get("base_margin", float(amount or 0.0) or 100.0))
+    max_adds              = int(SMART_AVG.get("max_adds", 5))
+    dca_step_pct          = float(SMART_AVG.get("dca_step_pct", 0.045))
+    dca_mode              = str(SMART_AVG.get("dca_mode", "equal"))
+    dca_factor            = float(SMART_AVG.get("dca_factor", 1.2))
+    tp_from_avg_pct       = float(SMART_AVG.get("tp_from_avg_pct", 0.01))
+    alt_tp_from_avg_pct   = float(SMART_AVG.get("alt_tp_from_avg_pct", 0.02))
+    max_margin_per_trade  = float(SMART_AVG.get("max_margin_per_trade", (float(amount or 0.0) + 500.0)))
+    min_liq_buffer        = float(SMART_AVG.get("min_liq_buffer", 0.40))
+    atr_pause_pct         = float(SMART_AVG.get("atr_pause_pct", 0.10))
+    trend_flip_cut_pct    = float(SMART_AVG.get("trend_flip_cut_pct", 0.0))
+    cooldown_min          = int(SMART_AVG.get("cooldown_min", 20))
 
-    partial_closed = False
-    trailing_stop_active = False
-    trailing_stop_price = None
-    remaining_amount = amount
+    # ===== Стан DCA з ActiveTrades (якщо є) =====
+    smart = None
+    try:
+        if trade_id and 'get_active_trade' in globals():
+            tr = get_active_trade(trade_id)
+            if tr and isinstance(tr, dict):
+                smart = tr.get("smart_avg")
+    except Exception as e:
+        log_error(f"⚠️ Не вдалося отримати active_trade для {trade_id}: {e}")
+
+    if not smart:
+        try:
+            init_qty = (float(amount) * float(leverage)) / float(entry_price)
+        except Exception:
+            init_qty = 0.0
+        smart = {
+            "enabled": dca_enabled,
+            "avg_entry": float(entry_price),
+            "adds_done": 0,
+            "max_adds": max_adds,
+            "dca_step_pct": dca_step_pct,
+            "dca_mode": dca_mode,
+            "dca_factor": dca_factor,
+            "tp_from_avg_pct": tp_from_avg_pct,
+            "alt_tp_from_avg_pct": alt_tp_from_avg_pct,
+            "tp_price": float(entry_price * (Decimal("1")+Decimal(str(tp_from_avg_pct)) if is_long else Decimal("1")-Decimal(str(tp_from_avg_pct)))),
+            "tp_order_id": None,  # біржовий TP не використовуємо (якщо USE_EXCHANGE_TP=False)
+            "total_margin_used": float(amount or 0.0),
+            "total_qty": init_qty,
+            "max_margin_per_trade": max_margin_per_trade,
+            "min_liq_buffer": min_liq_buffer,
+            "atr_pause_pct": atr_pause_pct,
+            "trend_flip_cut_pct": trend_flip_cut_pct,
+            "cooldown_min": cooldown_min
+        }
+
+    # Локальні змінні
+    avg_entry = Decimal(str(smart.get("avg_entry", float(entry_price))))
+    adds_done = int(smart.get("adds_done", 0))
+    total_margin_used = float(smart.get("total_margin_used", float(amount or 0.0)))
+    total_qty = float(smart.get("total_qty", 0.0))
+    tp_price = Decimal(str(smart.get("tp_price", float(avg_entry * (Decimal("1")+Decimal(str(tp_from_avg_pct)) if is_long else Decimal("1")-Decimal(str(tp_from_avg_pct)))))))
+    tp_order_id = smart.get("tp_order_id")
 
     peak_pnl_percent = -9999.0
-    worst_pnl_percent = 9999.0
+    worst_pnl_percent =  9999.0
+    trade_closed = False
 
-    def finalize_trade(reason, final_price, close_amount,signals=None):
-        nonlocal peak_pnl_percent, worst_pnl_percent, remaining_amount
-        pnl = ((final_price - entry_price) / entry_price)
+    def save_state():
+        if not trade_id:
+            return
+        smart["avg_entry"] = float(avg_entry)
+        smart["adds_done"] = int(adds_done)
+        smart["total_margin_used"] = float(total_margin_used)
+        smart["total_qty"] = float(total_qty)
+        smart["tp_price"] = float(tp_price)
+        smart["tp_order_id"] = tp_order_id
+        try:
+            if 'update_active_trade' in globals():
+                update_active_trade(trade_id, {"smart_avg": smart})
+        except Exception as e:
+            log_error(f"⚠️ update_active_trade failed для {trade_id}: {e}")
+
+    def calc_tp_from_avg():
+        return avg_entry * (Decimal("1")+Decimal(str(tp_from_avg_pct)) if is_long else Decimal("1")-Decimal(str(tp_from_avg_pct)))
+
+    def next_dca_price():
+        step = Decimal(str(dca_step_pct))
+        return avg_entry * (Decimal("1")-step if is_long else Decimal("1")+step)
+
+    def price_ok_for_dca(cur):
+        return (cur <= next_dca_price()) if is_long else (cur >= next_dca_price())
+
+    def finalize_trade(reason, final_price):
+        nonlocal peak_pnl_percent, worst_pnl_percent, trade_closed, total_qty
+
+        if trade_closed:
+            log_debug(f"⏭ finalize_trade вже викликано раніше для {symbol_clean} → скіп")
+            return
+
+        pnl = ((final_price - avg_entry) / avg_entry)
         if not is_long:
             pnl *= -1
-        pnl_percent = float(pnl * leverage * 100)
+        pnl_percent = float(pnl * Decimal(str(leverage)) * Decimal("100"))
         duration_seconds = (datetime.now() - entry_time).total_seconds()
         duration_str = str(timedelta(seconds=int(duration_seconds)))
         result = "WIN" if pnl_percent > 0 else "LOSS" if pnl_percent < 0 else "BREAKEVEN"
 
+        # Закриття ВСІЄЇ позиції через OrderExecutor (market reduceOnly)
         executor = OrderExecutor(
             symbol=symbol_clean,
-            side="Sell" if is_long else "Buy",
+            side=("Sell" if is_long else "Buy"),
             position_side=side,
-            amount_to_use=close_amount,
             leverage=leverage
         )
-        if executor.close_position():
-            log_message(f"✅ Часткове закриття {symbol_clean} ({reason}) на біржі")
-        else:
-            log_error(f"❌ НЕ ВДАЛОСЯ закрити {symbol_clean} ({reason}) на біржі")
+        closed_ok = False
+        try:
+            closed_ok = bool(executor.close_position())
+        except Exception as e:
+            log_error(f"❌ close_position exception для {symbol_clean}: {e}")
+            closed_ok = False
 
-        remaining_amount -= close_amount 
+        if not closed_ok:
+            log_error(f"❌ НЕ ВДАЛОСЯ закрити {symbol_clean} ({reason}) → залишаємо моніторинг")
+            return
 
-        if remaining_amount <= 0:
+        trade_closed = True
+        total_qty = 0.0
+
+        try:
             update_signal_record(trade_id, {
                 "closed": True,
                 "close_time": datetime.utcnow().isoformat(),
@@ -863,84 +1163,245 @@ def manage_open_trade(symbol, entry_price, side, amount, leverage, behavior_summ
                 "duration": duration_str,
                 "result": result
             })
+        except Exception:
+            pass
 
+        try:
             if signals:
-                try:
-                    log_final_trade_result(
-                        symbol=symbol_clean,
-                        trade_id=trade_id,
-                        entry_price=float(entry_price),
-                        exit_price=float(final_price),
-                        result=result,
-                        peak_pnl=round(peak_pnl_percent, 2),
-                        worst_pnl=round(worst_pnl_percent, 2),
-                        duration=duration_str,
-                        exit_reason=reason,
-                        snapshot=signals  # signals — це повний snapshot з conditions
-                    )
-                except Exception as e:
-                    log_message(f"📊 Запис трейду {trade_id} завершено у signal_stats.json")
+                log_final_trade_result(
+                    symbol=symbol_clean,
+                    trade_id=trade_id,
+                    entry_price=float(avg_entry),
+                    exit_price=float(final_price),
+                    result=result,
+                    peak_pnl=round(peak_pnl_percent, 2),
+                    worst_pnl=round(worst_pnl_percent, 2),
+                    duration=duration_str,
+                    exit_reason=reason,
+                    snapshot=signals
+                )
+        except Exception as e:
+            log_message(f"📊 Запис трейду {trade_id} завершено у signal_stats.json (fallback ok)")
+            log_error(f"⚠️ Не вдалося записати у signal_stats: {e}")
 
-                    log_error(f"⚠️ Не вдалося записати у signal_stats: {e}")
+        send_telegram_message(
+            f"📴 <b>Угода завершена:</b> {symbol_clean}\n"
+            f"Причина: {reason}\n"
+            f"Плече: {leverage}x\n"
+            f"Результат: {result} | PnL: {round(pnl_percent, 2)}%"
+        )
 
-            send_telegram_message(
-                f"📴 <b>Угода завершена:</b> {symbol_clean}\n"
-                f"Причина: {reason}\n"
-                f"Плече: {leverage}x\n"
-                f"Сума: {close_amount}\n"
-                f"Результат: {result} | PnL: {round(pnl_percent, 2)}%"
-            )
+        try:
+            if trade_id:
+                mark_trade_closed(trade_id, {
+                    "exit_reason": reason,
+                    "result_percent": round(pnl_percent, 2),
+                    "closed": True,
+                    "close_time": datetime.utcnow().isoformat()
+                })
+                remove_active_trade(trade_id)
+        except Exception as e:
+            log_error(f"⚠️ Не вдалося оновити ActiveTrades для {trade_id}: {e}")
 
+    # ===== Початковий TP — ТІЛЬКИ лог (на біржу не штовхаємо, якщо USE_EXCHANGE_TP=False) =====
+    if not tp_order_id:
+        try:
+            tp_price = calc_tp_from_avg()
+            if USE_EXCHANGE_TP and 'place_or_update_tp' in globals() and float(total_qty) > 0:
+                # якщо колись захочеш — можна увімкнути прапорець у config.py
+                tp_order_id = place_or_update_tp(
+                    symbol=symbol_clean,
+                    side=side,
+                    quantity=total_qty,
+                    avg_entry=float(avg_entry),
+                    tp_from_avg_pct=float(tp_from_avg_pct)
+                )
+                log_message(f"🎯 [DCA] Біржовий TP встановлено {symbol_clean} {side}: {float(tp_price):.6f} (qty≈{total_qty:.6f})")
+            else:
+                log_message(f"ℹ️ [DCA] Плановий TP (bot-only) {symbol_clean} {side}: {float(tp_price):.6f} (qty≈{total_qty:.6f})")
+        except Exception as _tp_err:
+            log_message(f"⚠️ Не вдалося поставити TP: {type(_tp_err).__name__}: {_tp_err}")
+    save_state()
+
+    # ===== Основний цикл =====
     try:
         while True:
             current_price = Decimal(str(get_current_futures_price(symbol_clean)))
+
+            # якщо позиція зникла на біржі → фіналізація
             if not check_position_with_retry(symbol_clean, side, retries=3, delay=2):
                 log_message(f"⚠️ Позиція {symbol_clean} закрита вручну на біржі → завершую моніторинг")
-                finalize_trade("Manual Close", current_price, remaining_amount,signals=signals)
+                finalize_trade("Manual Close", current_price)
                 break
 
-            pnl = ((current_price - entry_price) / entry_price)
+            # PnL від середньої
+            pnl = ((current_price - avg_entry) / avg_entry)
             if not is_long:
                 pnl *= -1
-            pnl_percent = float(pnl * leverage * 100)
+            pnl_percent = float(pnl * Decimal(str(leverage)) * Decimal("100"))
 
             if pnl_percent > peak_pnl_percent:
                 peak_pnl_percent = pnl_percent
             if pnl_percent < worst_pnl_percent:
                 worst_pnl_percent = pnl_percent
 
-            log_message(f"📡 {symbol_clean} Ціна: {current_price}, PnL: {round(pnl_percent, 2)}% "
-                        f"(Peak: {round(peak_pnl_percent, 2)}%, Worst: {round(worst_pnl_percent, 2)}%)")
+            log_message(
+                f"📡 [DCA] {symbol_clean} Ціна: {current_price}, PnL(avg): {round(pnl_percent, 2)}% "
+                f"(Peak: {round(peak_pnl_percent, 2)}%, Worst: {round(worst_pnl_percent, 2)}%) "
+                f"| avg={float(avg_entry):.6f}, adds={adds_done}/{max_adds}"
+            )
 
-            # 🎯 Часткове закриття
-            if not partial_closed and pnl_percent >= PARTIAL_CLOSE_TRIGGER * MANAGE_TP_PERCENT * 100:
-                partial_close_amount = amount * (PARTIAL_CLOSE_PERCENT / 100)
-                finalize_trade("Partial Take Profit", current_price, partial_close_amount,signals=signals)
-
-                trailing_stop_price = current_price * (1 - TRAILING_STOP_OFFSET if is_long else 1 + TRAILING_STOP_OFFSET)
-                trailing_stop_active = True
-                partial_closed = True
-                log_message(f"🔒 Часткове закриття {PARTIAL_CLOSE_PERCENT}% @ {current_price}, "
-                            f"Трейлінг-стоп активовано @ {trailing_stop_price}")
-
-            # 🏁 Трейлінг-стоп
-            if trailing_stop_active:
-                if (is_long and current_price <= trailing_stop_price) or (not is_long and current_price >= trailing_stop_price):
-                    finalize_trade("Trailing Stop", current_price, remaining_amount,signals=signals)
-                    break
-                if (is_long and current_price > trailing_stop_price) or (not is_long and current_price < trailing_stop_price):
-                    trailing_stop_price = current_price * (1 - TRAILING_STOP_OFFSET if is_long else 1 + TRAILING_STOP_OFFSET)
-                    log_message(f"📈 Трейлінг-стоп оновлено @ {trailing_stop_price}")
-
-            # 🎯 Take Profit
-            if (is_long and current_price >= take_profit) or (not is_long and current_price <= take_profit):
-                finalize_trade("Take Profit", current_price, remaining_amount,signals=signals)
+            # ====== BOT-ONLY TP з ε-допуском ======
+            tp_price = calc_tp_from_avg()
+            eps = Decimal(str(TP_EPSILON))
+            hit_tp = (
+                (is_long  and current_price >= (tp_price * (Decimal("1") - eps))) or
+                ((not is_long) and current_price <= (tp_price * (Decimal("1") + eps)))
+            )
+            if hit_tp:
+                log_message(f"⚑ [HIT_TP] {symbol_clean} {side}: {float(current_price):.6f} vs TP {float(tp_price):.6f}")
+                finalize_trade("Take Profit (soft)", current_price)
                 break
 
-            # ⛔ Stop Loss
-            if (is_long and current_price <= stop_loss) or (not is_long and current_price >= stop_loss):
-                finalize_trade("Stop Loss", current_price, remaining_amount,signals=signals)
-                break
+            # ====== DCA: докупка ======
+            if dca_enabled and adds_done < max_adds and price_ok_for_dca(current_price):
+                # ATR gate (опційно)
+                if atr_pause_pct > 0:
+                    try:
+                        snapshot = build_monitor_snapshot(symbol_clean)
+                        cond = convert_snapshot_to_conditions(snapshot) if snapshot else {}
+                        atrp = float(cond.get("atr_percent") or 0.0)
+                        if atrp and atrp >= (atr_pause_pct * 100.0):
+                            log_message(f"⏸ [DCA] ATR%={atrp:.2f} вище порогу ({atr_pause_pct*100:.0f}%) → пауза докупки")
+                            time.sleep(check_interval)
+                            continue
+                    except Exception:
+                        pass
+
+                # Розмір додатку в маржі
+                add_margin = base_margin * (dca_factor ** adds_done) if dca_mode == "progressive" else base_margin
+
+                # Ліміт маржі
+                if (total_margin_used + add_margin) > max_margin_per_trade:
+                    log_message(f"🛑 [DCA] max_margin_per_trade досягнуто ({total_margin_used + add_margin:.2f} > {max_margin_per_trade:.2f}) → докупка скасована")
+                    time.sleep(check_interval)
+                    continue
+
+                # Буфер до ліквідації (якщо є util)
+                can_add = True
+                if min_liq_buffer > 0 and 'has_liq_buffer_after_add' in globals():
+                    try:
+                        approx_qty = float(add_margin) * float(leverage) / float(current_price)
+                        can_add = bool(has_liq_buffer_after_add(symbol_clean, side, approx_qty, min_liq_buffer, leverage))
+                    except Exception:
+                        can_add = True
+                if not can_add:
+                    log_message(f"🛑 [DCA] Недостатній буфер до ліквідації → докупка скасована")
+                    time.sleep(check_interval)
+                    continue
+
+                # Надсилаємо докупку через OrderExecutor
+                executor = OrderExecutor(
+                    symbol=symbol_clean,
+                    side=("Buy" if is_long else "Sell"),
+                    position_side=side,
+                    amount_to_use=float(add_margin),
+                    leverage=leverage,
+                    target_price=float(current_price)
+                )
+                ok = False
+                fill_price = float(current_price)
+                filled_qty = 0.0
+                try:
+                    res = executor.execute()
+                    ok = bool(res and res.get("entry_price"))
+                    if ok:
+                        fill_price = float(res["entry_price"])
+                        filled_qty = float(res.get("quantity") or (add_margin * leverage / fill_price))
+                except Exception as e:
+                    log_error(f"❌ [DCA] execute() помилка для {symbol_clean}: {e}")
+
+                if not ok:
+                    log_message(f"⚠️ [DCA] Докупка не пройшла для {symbol_clean}")
+                    time.sleep(check_interval)
+                    continue
+
+                # Перерахунок середньої
+                prev_qty = total_qty
+                prev_avg = float(avg_entry)
+                total_qty = prev_qty + filled_qty
+                if total_qty <= 0:
+                    log_error(f"❌ [DCA] Аномалія total_qty <= 0 після докупки")
+                    time.sleep(check_interval)
+                    continue
+                avg_entry = Decimal(str((prev_avg * prev_qty + fill_price * filled_qty) / total_qty))
+                total_margin_used += float(add_margin)
+                adds_done += 1
+
+                # Оновлене планове TP (на біржу — лише за бажанням прапорця)
+                tp_price = calc_tp_from_avg()
+                if USE_EXCHANGE_TP and 'place_or_update_tp' in globals():
+                    try:
+                        tp_order_id = place_or_update_tp(
+                            symbol=symbol_clean,
+                            side=side,
+                            quantity=total_qty,
+                            avg_entry=float(avg_entry),
+                            tp_from_avg_pct=float(tp_from_avg_pct)
+                        )
+                        log_message(f"🎯 [DCA] Біржовий TP оновлено {symbol_clean} {side}: {float(tp_price):.6f} (qty≈{total_qty:.6f})")
+                    except Exception as _tp_err:
+                        log_message(f"⚠️ [DCA] Не вдалося оновити TP: {type(_tp_err).__name__}: {_tp_err}")
+                else:
+                    log_message(f"ℹ️ [DCA] Новий плановий TP (bot-only): {float(tp_price):.6f}")
+
+                save_state()
+
+                send_telegram_message(
+                    f"➕ <b>DCA додано</b> {symbol_clean}\n"
+                    f"Сходинка: {adds_done}/{max_adds}\n"
+                    f"Fill: {fill_price}\n"
+                    f"Нова середня: {float(avg_entry):.6f}\n"
+                    f"Новий TP: {float(tp_price):.6f}"
+                )
+
+            # ===== Опційний cut при розвороті тренду (частковий) =====
+            if trend_flip_cut_pct > 0:
+                try:
+                    snapshot = build_monitor_snapshot(symbol_clean)
+                    cond = convert_snapshot_to_conditions(snapshot) if snapshot else {}
+                    gtrend = str(cond.get("global_trend", "")).lower()
+                    flip_bad = (is_long and gtrend in {"bearish", "strong_bearish"}) or ((not is_long) and gtrend in {"bullish", "strong_bullish"})
+                    if flip_bad and total_qty > 0:
+                        cut_qty = total_qty * float(trend_flip_cut_pct)
+                        try:
+                            ex = OrderExecutor(
+                                symbol=symbol_clean,
+                                side=("Sell" if is_long else "Buy"),
+                                position_side=side,
+                                leverage=leverage
+                            )
+                            # часткове закриття лише якщо така функція є в executor.py
+                            if hasattr(ex, "close_position_qty"):
+                                ok_cut = bool(ex.close_position_qty(cut_qty))
+                                if ok_cut:
+                                    total_qty -= cut_qty
+                                    if USE_EXCHANGE_TP and 'place_or_update_tp' in globals():
+                                        tp_order_id = place_or_update_tp(
+                                            symbol=symbol_clean,
+                                            side=side,
+                                            quantity=total_qty,
+                                            avg_entry=float(avg_entry),
+                                            tp_from_avg_pct=float(tp_from_avg_pct)
+                                        )
+                                    save_state()
+                                    log_message(f"✂️ [DCA] Trend-flip cut: скорочено {cut_qty:.6f} {symbol_clean}. Залишок qty={total_qty:.6f}")
+                            else:
+                                log_message("ℹ️ close_position_qty відсутня в executor.py → пропускаю частковий cut")
+                        except Exception as e:
+                            log_error(f"⚠️ [DCA] Trend-flip cut помилка: {e}")
+                except Exception:
+                    pass
 
             time.sleep(check_interval)
 
@@ -974,31 +1435,16 @@ def adjust_risk_by_volatility(symbol, base_leverage=50):
 
 def load_active_trades():
     """
-    📥 Завантажує ActiveTrades з JSON у форматі dict (ключ trade_id).
-    Якщо файл відсутній, пустий або пошкоджений — повертає {}
+    📥 Повертає dict активних угод із ActiveTrades.json (ключ = trade_id).
     """
     try:
-        if not os.path.exists(ACTIVE_TRADES_FILE):
-            log_message("📂 ActiveTrades файл відсутній — створюю новий.")
-            return {}
-
-        with open(ACTIVE_TRADES_FILE, "r", encoding="utf-8") as f:
-            active_trades = json.load(f)
-
-        if isinstance(active_trades, list):
-            log_error("❌ ActiveTrades у форматі list — конвертую у dict за trade_id.")
-            dict_trades = {}
-            for trade in active_trades:
-                trade_id = trade.get("trade_id") or f"{trade.get('symbol', 'UNKNOWN')}_{datetime.utcnow().timestamp()}"
-                dict_trades[trade_id] = trade
-            return dict_trades
-
-        if not isinstance(active_trades, dict):
-            log_error("❌ ActiveTrades має некоректний формат (очікується dict). Скидання.")
-            return {}
-
-        return active_trades
-
+        data = _at_safe_load()  # потокобезпечне читання з utils.logger
+        if isinstance(data, dict):
+            return data
+        elif isinstance(data, list):
+            # Рідкісний кейс: якщо раптом список — конвертуємо
+            return {t.get("trade_id", f"trade_{i}"): t for i, t in enumerate(data) if isinstance(t, dict)}
+        return {}
     except Exception as e:
         log_error(f"❌ load_active_trades: помилка завантаження → {e}")
         return {}
@@ -1102,7 +1548,9 @@ def monitor_all_open_trades():
                 trade_id = resolve_trade_id(symbol, side)
                 if not trade_id:
                     # Резервний біржовий ідентифікатор (НЕ використовується для оновлення stats, тільки для ключа потоку)
-                    trade_id = f"{symbol}_{pos.get('positionIdx', '0')}"
+
+                    local_id = resolve_trade_id(symbol, side)     # 👈 спробує знайти наш trade_id у ActiveTrades
+                    trade_id = local_id or f"{symbol}_{pos.get('positionIdx', '0')}"
 
                 live_trades[trade_id] = {
                     "symbol": symbol,
@@ -1129,6 +1577,8 @@ def monitor_all_open_trades():
             try:
                 with open(ACTIVE_TRADES_FILE_SIMPLE, "w", encoding="utf-8") as f:
                     json.dump(simple_trades, f, indent=2, ensure_ascii=False)
+                    prune_inactive_trades(set(live_trades.keys()))
+
                 log_debug(f"ActiveTradesSimple.json оновлено ({len(simple_trades)} угод)")
             except Exception as e:
                 log_error(f"❌ [monitor_all_open_trades] Помилка при записі ActiveTradesSimple.json: {e}")
@@ -1152,3 +1602,6 @@ def monitor_all_open_trades():
             log_error(f"❌ monitor_all_open_trades (API): {e}")
 
         time.sleep(2)
+
+
+

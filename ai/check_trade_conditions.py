@@ -49,8 +49,6 @@ def _log_rejection(symbol: str | None, side: str, payload: dict) -> None:
     if _is_duplicate_rejection(symbol_key, side, payload):
         return
 
-
-    
     if not ENABLE_REJECTION_LOG:
         return
     try:
@@ -78,16 +76,16 @@ def _log_rejection(symbol: str | None, side: str, payload: dict) -> None:
 
 # -*- coding: utf-8 -*-
 """
-CheckTradeConditions — 15m regime-aware (drop-in)
+CheckTradeConditions — 15m regime-aware (drop-in) [ACTIVE MODE + TREND ALIGNMENT]
 - API: evaluate_long, evaluate_short, evaluate_both(raw_conditions: dict) -> dict
-- Працює з твоїми існуючими полями (нічого нового додавати не потрібно).
-- Поєднує 2 сетапи: Mean-Reversion (відскок) і Momentum (пробій/продовження).
-- Анти-фальстарт гварди ввімкнені помірно й не душать сигнали без даних.
+- Працює з твоїми існуючими полями.
+- Поєднує 2 сетапи: Mean-Reversion (відскок) і Momentum (пробій).
+- Додано жорстке правило: не торгуємо проти глобального тренду; плюс мікро-трендовий фільтр (5m).
 
-Очікувані поля (усі ми вже підклали):
+Очікувані поля:
 - bar_closed: bool (закрита 15m свічка)
 - bars_in_state: int (гістерезис)
-- atr_percent: float | None (ATR(15m)/price*100) — якщо None, ATR-фільтр не застосовується
+- atr_percent: float | None
 - support_position: "near_support" | "between" | "near_resistance"
 - bollinger_position, bollinger_width
 - rsi_value, rsi_trend; stoch_k, stoch_d
@@ -157,7 +155,6 @@ CCI_BUCKET_RULE = [
 def _build_derived(conditions: Dict[str, Any]) -> Dict[str, Any]:
     """
     Нормалізація чисел/рядків, бакети, патерни, безпечні дефолти.
-    НІЧОГО не вимагає понад те, що вже є у твоєму конвеєрі.
     """
     c = dict(conditions or {})
 
@@ -248,8 +245,7 @@ def _build_derived(conditions: Dict[str, Any]) -> Dict[str, Any]:
        mc = "none"
     c["macd_crossed"] = mc
 
-
-    # safety defaults (НЕ душать, лише підстраховують)
+    # safety defaults
     c.setdefault("microtrend_1m", "neutral")
     c.setdefault("microtrend_5m", "neutral")
 
@@ -270,28 +266,20 @@ def _build_derived(conditions: Dict[str, Any]) -> Dict[str, Any]:
            ap = round((al / pr) * 100.0, 3)
     c["atr_percent"] = ap
 
-
-    # зручності
     c["bollinger_width"] = _to_float(c.get("bollinger_width"), None)
 
     return c
 
-# ===================== Regime detection (просте, але ефективне) =====================
+# ===================== Regime detection =====================
 
 def _detect_regime(c: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    Визначає режими ринку за atr_percent, bollinger_width, global_trend.
-    Не потребує нових даних.
-    """
     atrp = _to_float(c.get("atr_percent"), None)
     bbw  = _to_float(c.get("bollinger_width"), None)
     gtr  = c.get("global_trend", "neutral")
 
-    # пороги підібрані під 15m
     low_vol  = (atrp is not None and atrp <= 0.6)
     high_vol = (atrp is not None and atrp >= 4.5)
     ranged   = (bbw is not None and bbw < 6.0) or (not high_vol and not low_vol)
-
     trending = gtr in {"bullish","strong_bullish","bearish","strong_bearish"}
 
     return {
@@ -304,27 +292,40 @@ def _detect_regime(c: Dict[str, Any]) -> Dict[str, Any]:
 # ===================== Tunables =====================
 
 # Ваги та пороги
-W_CORE   = 1.5       # трохи менше ваги за "сирі" умови
-W_PAIR   = 2.8       # трохи більше ваги за підтверджені пари
-W_BONUS  = 1.2       # легкий бонус, коли сетап узгоджений з режимом
-THRESH_LONG  = 8.0   # було 7.0 — піджимаємо
-THRESH_SHORT = 8.5   # було 7.0 — ще строго для SHORT
+W_CORE   = 1.5
+W_PAIR   = 2.8
+W_BONUS  = 1.2
 
-# Анти-фальстарт гварди
+# --- ACTIVE MODE thresholds ---
+THRESH_LONG  = 4.5
+THRESH_SHORT = 4.5
+
+# Політика вирівнювання по тренду
+TREND_ALIGNMENT = {
+    "align_with_global": False,              # не торгувати проти глобального тренду
+    "align_with_micro5": False,              # і не йти проти 5m мікротренду
+    "allow_flat_as_neutral": False,          # flat/neutral не блокує
+    "bearish_block_levels": {"bearish","strong_bearish"},
+    "bullish_block_levels": {"bullish","strong_bullish"},
+    "micro_bearish_levels": {"bearish","strong_bearish"},
+    "micro_bullish_levels": {"bullish","strong_bullish"},
+}
+
+# Анти-фальстарт гварди (активний режим)
 ANTI_FALSE_OPEN = {
-    "require_closed_candle": True,     # тільки закрита 15m
-    "hysteresis_bars": 3,              # було 2 → менше шуму
-    "min_pair_hits_long": 2,           # було 1
-    "min_pair_hits_short": 2,          # було 1
-    "need_long_confirm_any": True,     # хоч якесь підтвердження
-    "need_short_confirm_any": True,
-    "atr_pct_bounds": (0.5, 6.0),      # було (0.3, 6.0) → прибрали надто "мертві" ринки
+    "require_closed_candle": False,     # тільки закрита 15m
+    "hysteresis_bars": 2,
+    "min_pair_hits_long": 0,
+    "min_pair_hits_short": 0,
+    "need_long_confirm_any": False,
+    "need_short_confirm_any": False,
+    "atr_pct_bounds": (0.35, 8.0),
     "exclusive_blockers": True
 }
 
 DECISION_DELTA = 0.5
 
-# Підтвердження
+# Підтвердження (залишаються для довідки/можливих експериментів)
 CONFIRM_LONG = [
     ("rsi_trend", "up"),
     ("macd_crossed", "bullish_cross"),
@@ -343,11 +344,17 @@ CONFIRM_SHORT = [
     ("pat_bearish_engulfing", "yes"),
 ]
 
-# Блокатори (щоб не лізти проти паровоза)
-BLOCK_LONG  = [("global_trend", "strong_bearish"),
-               ("support_position", "near_resistance")]  # не купуємо впритул до опору
-BLOCK_SHORT = [("global_trend", "strong_bullish"),
-               ("support_position", "near_support")]     # не шортимо впритул до підтримки
+# Блокатори (розширені по глобальному тренду)
+BLOCK_LONG  = [
+    ("global_trend", "strong_bearish"),
+    ("global_trend", "bearish"),          # ✚ нове: блокуємо LONG і при просто bearish
+    
+]
+BLOCK_SHORT = [
+    ("global_trend", "strong_bullish"),
+    ("global_trend", "bullish"),          # ✚ нове: блокуємо SHORT і при просто bullish
+    
+]
 
 # ===================== Rule Engine =====================
 
@@ -357,7 +364,7 @@ Pair = List[Tuple[str, str]]
 MR_LONG_CORE: List[Tuple[str, str]] = [
     ("support_position", "near_support"),
     ("boll_bucket", "<=30"),
-    ("rsi_bucket", "<=30"),          # або 30-40 в парах
+    ("rsi_bucket", "<=30"),
     ("stoch_d_bucket", "<=20"),
 ]
 MR_LONG_PAIRS: List[Pair] = [
@@ -366,9 +373,9 @@ MR_LONG_PAIRS: List[Pair] = [
     [("macd_crossed", "bullish_cross"), ("rsi_trend", "up")],
     [("pat_hammer", "yes"), ("rsi_trend", "up")],
     [("pat_bullish_engulfing", "yes"), ("rsi_trend", "up")],
-    [("pat_bullish_engulfing", "yes"), ("support_position", "near_support")],  # підсилення біля підтримки
+    [("pat_bullish_engulfing", "yes"), ("support_position", "near_support")],
     [("microtrend_1m", "bullish"), ("microtrend_5m", "neutral")],
-    [("microtrend_1m", "bullish"), ("microtrend_5m", "bullish")],              # дозволяємо явний мікроап
+    [("microtrend_1m", "bullish"), ("microtrend_5m", "bullish")],
     [("microtrend_1m", "strong_bullish"), ("microtrend_5m", "bullish")],
 ]
 
@@ -399,16 +406,16 @@ MR_SHORT_PAIRS: List[Pair] = [
     [("macd_crossed", "bearish_cross"), ("rsi_trend", "down")],
     [("pat_shooting_star", "yes"), ("rsi_trend", "down")],
     [("pat_bearish_engulfing", "yes"), ("rsi_trend", "down")],
-    [("pat_bearish_engulfing", "yes"), ("support_position", "near_resistance")],  # як у твоїх TP
+    [("pat_bearish_engulfing", "yes"), ("support_position", "near_resistance")],
     [("microtrend_1m", "bearish"), ("microtrend_5m", "neutral")],
-    [("microtrend_1m", "bearish"), ("microtrend_5m", "bearish")],                 # додано явний даунтренд
+    [("microtrend_1m", "bearish"), ("microtrend_5m", "bearish")],
     [("microtrend_1m", "bearish"), ("microtrend_5m", "strong_bearish")],
 ]
 
 # --- Momentum (SHORT) ---
 MO_SHORT_CORE: List[Tuple[str, str]] = [
     ("boll_bucket", "30-45"),
-    ("rsi_bucket", "50-60"),          # було 40-50 → фільтруємо "слабку" нейтральну зону
+    ("rsi_bucket", "50-60"),
     ("macd_hist_direction", "down"),
 ]
 MO_SHORT_PAIRS: List[Pair] = [
@@ -449,7 +456,7 @@ def _score_block(c: Dict[str, Any], core: List[Tuple[str, str]], pairs: List[Pai
     return {"score": score, "matched": matched, "reasons": reasons, "_pair_hits_count": len(pair_hits)}
 
 def _apply_regime_bonus(side: str, tag: str, regime: Dict[str, Any], scorepack: Dict[str, Any]) -> None:
-    # даємо невеликий бонус, якщо сетап відповідає режиму
+    # невеликий бонус, якщо сетап відповідає режиму
     if side == "LONG":
         if tag == "MR" and (regime["is_range"] or regime["is_low_vol"]):
             scorepack["score"] += W_BONUS
@@ -465,7 +472,7 @@ def _apply_regime_bonus(side: str, tag: str, regime: Dict[str, Any], scorepack: 
             scorepack["score"] += W_BONUS
             scorepack["reasons"].append(f"{side}.{tag}.bonus regime")
 
-# ===================== Anti-noise post-filters =====================
+# ===================== Anti-noise & Alignment filters =====================
 
 def _meets_pairs_quorum(res: Dict[str, Any], min_pairs: int) -> bool:
     if not min_pairs:
@@ -478,14 +485,55 @@ def _any_of(c: Dict[str, Any], pairs_list: List[Tuple[str, str]]) -> bool:
 def _blocked_by(c: Dict[str, Any], blockers: List[Tuple[str, str]]) -> bool:
     if not blockers or not ANTI_FALSE_OPEN.get("exclusive_blockers", True):
         return False
-    return any(c.get(k) == v for (k, v) in blockers)
+    return any(c.get(k) == v for k, v in blockers)
+
+def _trend_alignment_blocks(side: str, c: Dict[str, Any]) -> str | None:
+    """
+    Повертає текст причини блокування за трендом або None.
+    """
+    if not TREND_ALIGNMENT:
+        return None
+
+    g = c.get("global_trend", "neutral")
+    m5 = c.get("microtrend_5m", "neutral")
+
+    allow_flat = TREND_ALIGNMENT.get("allow_flat_as_neutral", True)
+    bear_levels = TREND_ALIGNMENT.get("bearish_block_levels", {"bearish","strong_bearish"})
+    bull_levels = TREND_ALIGNMENT.get("bullish_block_levels", {"bullish","strong_bullish"})
+    micro_bear = TREND_ALIGNMENT.get("micro_bearish_levels", {"bearish","strong_bearish"})
+    micro_bull = TREND_ALIGNMENT.get("micro_bullish_levels", {"bullish","strong_bullish"})
+
+    # Глобальний тренд
+    if TREND_ALIGNMENT.get("align_with_global", True):
+        if side == "LONG" and g in bear_levels:
+            return f"align: global_bear({g})"
+        if side == "SHORT" and g in bull_levels:
+            return f"align: global_bull({g})"
+
+    # Мікро 5m
+    if TREND_ALIGNMENT.get("align_with_micro5", True):
+        if side == "LONG" and m5 in micro_bear:
+            # Якщо flat вважаємо нейтральним — не блокуємо на flat.
+            if not (allow_flat and m5 in {"flat","neutral"}):
+                return f"align: micro5_bear({m5})"
+        if side == "SHORT" and m5 in micro_bull:
+            if not (allow_flat and m5 in {"flat","neutral"}):
+                return f"align: micro5_bull({m5})"
+
+    return None
 
 def _apply_anti_filters(side: str, c: Dict[str, Any], res_total: Dict[str, Any], allow: bool) -> Tuple[bool, Dict[str, Any]]:
     if not allow:
         return allow, res_total
 
+    # 0) Вирівнювання по тренду (нове)
+    align_reason = _trend_alignment_blocks(side, c)
+    if align_reason:
+        allow = False
+        res_total["reasons"].append(align_reason)
+
     # 1) Закрита свічка
-    if ANTI_FALSE_OPEN["require_closed_candle"] and not bool(c.get("bar_closed", True)):
+    if allow and ANTI_FALSE_OPEN["require_closed_candle"] and not bool(c.get("bar_closed", True)):
         allow = False
         res_total["reasons"].append("anti: wait_close")
 
@@ -508,7 +556,7 @@ def _apply_anti_filters(side: str, c: Dict[str, Any], res_total: Dict[str, Any],
             allow = False
             res_total["reasons"].append(f"anti: atr_out({round(float(ap),3)} not in {lo}-{hi})")
 
-    # 4) Мінімальна к-ть підтверджень
+    # 4) Мінімальна к-ть підтверджень (у ACTIVE режимі, як правило, 0)
     if side == "LONG":
         if allow and not _meets_pairs_quorum(res_total, int(ANTI_FALSE_OPEN.get("min_pair_hits_long", 0) or 0)):
             allow = False
@@ -554,7 +602,6 @@ def _public_payload(side: str, allow: bool, res: Dict[str, Any], c: Dict[str, An
         "side": side,
         "evidence": {k: c.get(k) for k in ev_keys if k in c}
     }
-    # додаємо режим у reasons для дебагу
     payload["reasons"].append(f"regime: trend={regime['is_trend']} range={regime['is_range']} hiVol={regime['is_high_vol']} loVol={regime['is_low_vol']}")
     return payload
 
@@ -562,7 +609,6 @@ def evaluate_long(raw_conditions: Dict[str, Any]) -> Dict[str, Any]:
     c = _build_derived(raw_conditions)
     regime = _detect_regime(c)
 
-    # Оцінюємо обидва сетапи і сумуємо
     mr = _score_block(c, MR_LONG_CORE, MR_LONG_PAIRS, "LONG", "MR")
     mo = _score_block(c, MO_LONG_CORE, MO_LONG_PAIRS, "LONG", "MO")
     _apply_regime_bonus("LONG", "MR", regime, mr)
@@ -623,7 +669,3 @@ def evaluate_both(raw_conditions: Dict[str, Any]) -> Dict[str, Any]:
         else:
             decision = "LONG" if L["score"] >= S["score"] else "SHORT"
     return {"decision": decision, "long": L, "short": S}
-
-
-
-

@@ -345,13 +345,19 @@ def analyze_stochastic(symbol):
 
 def analyze_bollinger_bands(symbol):
     """
-    📊 Bollinger (15m), чутливіше:
-    - Стиснення (squeeze) як нижній квартиль ширини за останні 40 барів
-    - Momentum за позицією: >65 → bullish_momentum, <35 → bearish_momentum
-    - Breakout лишаємо (вихід за межі)
+    📊 Bollinger Bands (15m, 20 періодів, 2σ) — стабільніша версія:
+    - Позиція в каналі завжди 0..100 (кламп)
+    - Squeeze: ширина нижче 25-го перцентилю за останні 40 барів
+    - Momentum за позицією: >=65 → bullish_momentum, <=35 → bearish_momentum
+    - Breakout-детект: price > upper / price < lower
+    Повертає ту ж структуру, що й раніше (drop-in).
     """
     try:
-        df = get_klines_clean_bybit(symbol, interval="15m", limit=200)
+        import pandas as pd
+        import numpy as np
+        import talib
+
+        df = get_klines_clean_bybit(symbol, interval="15m", limit=300)
         if df is None or df.empty or len(df) < 40:
             return {
                 "bollinger": {
@@ -365,49 +371,78 @@ def analyze_bollinger_bands(symbol):
                 }
             }
 
-        close = df["close"].astype(float).values
-        upper, middle, lower = talib.BBANDS(close)
-        last_close = float(close[-1])
-        upper_val = float(upper[-1]) if not pd.isna(upper[-1]) else last_close
-        lower_val = float(lower[-1]) if not pd.isna(lower[-1]) else last_close
-        width_now = max(upper_val - lower_val, 1e-8)
+        close = pd.to_numeric(df["close"], errors="coerce").astype(float)
+        close = close.dropna()
+        if close.empty or len(close) < 40:
+            return {
+                "bollinger": {
+                    "signal": "neutral",
+                    "position": 50,
+                    "width": 0.0,
+                    "status": "neutral",
+                    "score": 0.0,
+                    "raw_values": {},
+                    "last_5_widths": []
+                }
+            }
 
-        # Позиція в каналі (0..100)
-        position = round(((last_close - lower_val) / width_now) * 100, 2)
+        arr = close.values
+        # Класичні параметри: 20 періодів, 2σ
+        upper, middle, lower = talib.BBANDS(arr, timeperiod=20, nbdevup=2, nbdevdn=2, matype=0)
 
-        # Динамічний squeeze: порівнюємо поточну ширину з квантилем 25% за 40 барів
-        widths = pd.Series((upper - lower)).tail(40).astype(float)
-        widths = widths.replace([np.inf, -np.inf], np.nan).fillna(method="ffill").fillna(method="bfill")
-        q25 = float(widths.quantile(0.25)) if not widths.isna().all() else width_now
-        is_squeeze = width_now <= max(q25, 1e-8)
+        last_close = float(arr[-1])
+        up = float(upper[-1]) if np.isfinite(upper[-1]) else last_close
+        lo = float(lower[-1]) if np.isfinite(lower[-1]) else last_close
+        mid = float(middle[-1]) if np.isfinite(middle[-1]) else last_close
+
+        width_now = up - lo
+        if not np.isfinite(width_now) or width_now <= 0:
+            width_now = 1e-9  # захист від нульової ширини
+
+        # Позиція в каналі (клампимо 0..100)
+        pos_raw = ((last_close - lo) / width_now) * 100.0
+        position = round(max(0.0, min(100.0, pos_raw)), 2)
+
+        # Динамічний squeeze: порівнюємо поточну ширину з Q25 за 40 барів
+        widths_series = pd.Series(upper - lower)
+        widths_series = widths_series.replace([np.inf, -np.inf], np.nan).ffill().bfill()
+        widths_last40 = widths_series.tail(40)
+        q25 = float(widths_last40.quantile(0.25)) if not widths_last40.isna().all() else width_now
+        is_squeeze = width_now <= max(q25, 1e-9)
+
+        # Ширина у відсотках до середньої смуги — зручно для діагностики
+        width_pct = float(width_now / mid) if mid > 0 else 0.0
 
         # Сигнали
         signal, score = "neutral", 0.0
-        if last_close > upper_val:
+        if last_close > up:
             signal, score = "breakout_up", +10.0
-        elif last_close < lower_val:
+        elif last_close < lo:
             signal, score = "breakout_down", -10.0
         elif is_squeeze:
             signal, score = "squeeze", +3.0
-        elif position >= 65:
+        elif position >= 65.0:
             signal, score = "bullish_momentum", +1.5
-        elif position <= 35:
+        elif position <= 35.0:
             signal, score = "bearish_momentum", -1.5
+
+        last_5_widths = widths_series.tail(5).round(4).fillna(0.0).tolist()
 
         return {
             "bollinger": {
                 "signal": signal,
-                "position": position,
-                "width": round(width_now, 4),
+                "position": position,                    # 0..100
+                "width": round(float(width_now), 4),     # абсолютна ширина
                 "status": signal,
-                "score": round(score, 2),
+                "score": round(float(score), 2),
                 "raw_values": {
                     "last_close": round(last_close, 6),
-                    "upper_val": round(upper_val, 6),
-                    "lower_val": round(lower_val, 6),
-                    "q25_width": round(q25, 6)
+                    "upper_val": round(up, 6),
+                    "lower_val": round(lo, 6),
+                    "q25_width": round(float(q25), 6),
+                    "width_pct": round(float(width_pct), 6)
                 },
-                "last_5_widths": pd.Series(upper - lower).tail(5).round(4).tolist()
+                "last_5_widths": last_5_widths
             }
         }
 
@@ -428,16 +463,23 @@ def analyze_bollinger_bands(symbol):
 
 def analyze_support_resistance(symbol):
     """
-    🛡️ Аналіз рівнів підтримки та опору на 15хв + оцінка положення (score).
-    Повертає структурований dict для SignalStats.
+    🛡️ Аналіз підтримки/опору на 15m:
+    - Swing-рівні + легка кластеризація
+    - Нормалізація відстані через ATR/BB-width/%
+    - Симетричні пороги "near"
+    - Коректно визначає пробої (у raw), але position -> {near_support|between|near_resistance}
+    Повертає структуру, сумісну з існуючим пайплайном.
     """
     try:
-        df = get_klines_clean_bybit(symbol, interval="15m", limit=150)
+        import math
+        import pandas as pd
+
+        df = get_klines_clean_bybit(symbol, interval="15m", limit=200)
         price = get_current_futures_price(symbol)
 
-        if df is None or price is None:
-            support = resistance = price if price else 0
-            result = {
+        if df is None or len(df) < 30 or price is None:
+            support = resistance = float(price) if price else 0.0
+            return {
                 "support_resistance": {
                     "support": support,
                     "resistance": resistance,
@@ -448,77 +490,250 @@ def analyze_support_resistance(symbol):
                     "raw_values": {}
                 }
             }
-           
-            return result
 
-        recent_lows = df["low"].tail(20).astype(float)
-        recent_highs = df["high"].tail(20).astype(float)
+        # -- Витяг числових колонок
+        df = df.copy()
+        for c in ("open", "high", "low", "close"):
+            df[c] = pd.to_numeric(df[c], errors="coerce")
+        df = df.dropna(subset=["high", "low", "close"])
+        if df.empty:
+            support = resistance = float(price)
+            return {
+                "support_resistance": {
+                    "support": support,
+                    "resistance": resistance,
+                    "position": "unknown",
+                    "distance_to_support": 0.0,
+                    "distance_to_resistance": 0.0,
+                    "score": 0.0,
+                    "raw_values": {}
+                }
+            }
 
-        support = recent_lows.min()
-        resistance = recent_highs.max()
+        # ---------- Допоміжні обчислення ----------
+        # ATR(14)
+        high = df["high"].astype(float)
+        low = df["low"].astype(float)
+        close = df["close"].astype(float)
+        prev_close = close.shift(1)
 
-        if support is None or resistance is None or support >= resistance:
-            support = price * 0.97
-            resistance = price * 1.03
+        tr = pd.concat([
+            (high - low).abs(),
+            (high - prev_close).abs(),
+            (low - prev_close).abs()
+        ], axis=1).max(axis=1)
 
-        if price <= support * 1.003:
+        atr = tr.rolling(14, min_periods=14).mean().iloc[-1]
+        atr = float(atr) if pd.notna(atr) else 0.0
+
+        # Bollinger width (20), абсолютна (upper-lower)
+        sma20 = close.rolling(20, min_periods=20).mean()
+        std20 = close.rolling(20, min_periods=20).std()
+        bb_width_abs = float((std20.iloc[-1] * 4.0)) if pd.notna(std20.iloc[-1]) else 0.0  # 2σ вгору + 2σ вниз
+        bb_width_pct = (bb_width_abs / float(sma20.iloc[-1])) if (pd.notna(sma20.iloc[-1]) and sma20.iloc[-1] > 0) else 0.0
+
+        # ---------- Swing-рівні (фрактали) ----------
+        # Локальні мінімуми/максимуми у вікні (left/right = 2)
+        def _swing_points(series, is_low=True, left=2, right=2):
+            s = series.values
+            idxs = []
+            for i in range(left, len(s) - right):
+                window = s[i-left:i+right+1]
+                val = s[i]
+                if is_low:
+                    if val == window.min() and (window[:left] > val).all() and (window[-right:] > val).all():
+                        idxs.append(i)
+                else:
+                    if val == window.max() and (window[:left] < val).all() and (window[-right:] < val).all():
+                        idxs.append(i)
+            return idxs
+
+        lookback = 120  # останні N барів для пошуку фракталів
+        df_look = df.tail(lookback)
+        lows_idx = _swing_points(df_look["low"], is_low=True, left=2, right=2)
+        highs_idx = _swing_points(df_look["high"], is_low=False, left=2, right=2)
+
+        swing_lows = df_look["low"].iloc[lows_idx].astype(float).tolist()
+        swing_highs = df_look["high"].iloc[highs_idx].astype(float).tolist()
+
+        # Якщо свінгів нема — fallback на останні 20 екстремумів (як було)
+        if not swing_lows:
+            swing_lows = df["low"].tail(20).astype(float).tolist()
+        if not swing_highs:
+            swing_highs = df["high"].tail(20).astype(float).tolist()
+
+        # ---------- Легка кластеризація рівнів ----------
+        # Об'єднуємо дуже близькі рівні, щоб не дублювати шум (поріг ~0.15 ATR або 0.1% ціни)
+        def _cluster_levels(levels, tol_abs):
+            if not levels:
+                return []
+            levels = sorted(levels)
+            clusters = [[levels[0]]]
+            for v in levels[1:]:
+                if abs(v - clusters[-1][-1]) <= tol_abs:
+                    clusters[-1].append(v)
+                else:
+                    clusters.append([v])
+            # представник кластера — медіана
+            import statistics as _st
+            return [float(_st.median(c)) for c in clusters]
+
+        tol_abs = max(0.15 * atr, 0.001 * float(price)) if atr > 0 else 0.0015 * float(price)
+        lows_cl = _cluster_levels(swing_lows, tol_abs)
+        highs_cl = _cluster_levels(swing_highs, tol_abs)
+
+        # Вибираємо найближчу підтримку нижче/≈ ціни та опір вище/≈ ціни
+        p = float(price)
+        support_candidates = [lv for lv in lows_cl if lv <= p]
+        resistance_candidates = [hv for hv in highs_cl if hv >= p]
+
+        support = max(support_candidates) if support_candidates else (max(lows_cl) if lows_cl else None)
+        resistance = min(resistance_candidates) if resistance_candidates else (min(highs_cl) if highs_cl else None)
+
+        # Якщо все одно щось бракує — fallback: +/- max(2*ATR, 3% ціни)
+        if support is None or math.isnan(support):
+            fallback_s = p - max(2.0 * atr, 0.03 * p)
+            support = float(fallback_s)
+        if resistance is None or math.isnan(resistance):
+            fallback_r = p + max(2.0 * atr, 0.03 * p)
+            resistance = float(fallback_r)
+
+        # sanity: якщо переплутались
+        if support >= resistance:
+            # розсунемо рівні навколо ціни
+            half_span = max(2.0 * atr, 0.03 * p)
+            support = p - half_span
+            resistance = p + half_span
+
+        # ---------- Нормалізація відстаней ----------
+        dist_s_abs = max(0.0, p - support)
+        dist_r_abs = max(0.0, resistance - p)
+
+        # пороги "near": беремо кращий із 3 нормувань
+        near_thr_atr = 0.60  # <= 0.60 * ATR
+        near_thr_bw  = 0.35  # <= 0.35 * BB width
+        near_thr_pct = 0.006 # <= 0.6% від ціни
+
+        def _is_near(dist_abs):
+            votes = []
+            if atr > 0:
+                votes.append(dist_abs <= near_thr_atr * atr)
+            if bb_width_abs > 0:
+                votes.append(dist_abs <= near_thr_bw * bb_width_abs)
+            votes.append((dist_abs / p) <= near_thr_pct)
+            return any(votes)
+
+        near_s = _is_near(dist_s_abs)
+        near_r = _is_near(dist_r_abs)
+
+        # Breakout buffer (щоб відрізнити явний пробій від "майже біля"):
+        breakout_buf = max(0.10 * atr, 0.10 * bb_width_abs, 0.003 * p)
+        breakout_state = "none"
+        if p < support - breakout_buf:
+            breakout_state = "below_support"
+        elif p > resistance + breakout_buf:
+            breakout_state = "above_resistance"
+
+        # ---------- Класифікація position (симетрична та стабільна) ----------
+        # 1) явні пробої у raw (position лишаємо в домені твоєї системи)
+        # 2) якщо обидва "near" -> беремо ближчий (з невеличким tie-breaker 0.9)
+        # 3) інакше — хто "near", той і перемагає; інакше — between.
+        position = "between"
+        if near_s and near_r:
+            if dist_s_abs <= dist_r_abs * 0.9:
+                position = "near_support"
+            elif dist_r_abs <= dist_s_abs * 0.9:
+                position = "near_resistance"
+            else:
+                # практично на середині каналу
+                position = "between"
+        elif near_s:
             position = "near_support"
-            score = 6.0
-        elif price >= resistance * 0.99:
+        elif near_r:
             position = "near_resistance"
-            score = -6.0
-        elif price < support:
-            position = "below_support"
-            score = 8.0
-        elif price > resistance:
-            position = "above_resistance"
-            score = -8.0
         else:
             position = "between"
+
+        # ---------- Оцінка score (плавна, але у звичному діапазоні) ----------
+        # близько до рівня -> |score| до ~6; між рівнями -> 0
+        def _score_from_dist(dist_abs):
+            # нормуємо до найкращого з ATR/BB/pct
+            parts = []
+            if atr > 0:
+                parts.append(dist_abs / (near_thr_atr * atr))
+            if bb_width_abs > 0:
+                parts.append(dist_abs / (near_thr_bw * bb_width_abs))
+            parts.append((dist_abs / p) / near_thr_pct)
+            x = min(parts)  # <1 → ближче порога
+            x = max(0.0, min(1.5, x))
+            return max(0.0, 1.0 - x)  # 1.0 при самому рівні, ~0 при далекій відстані
+
+        score = 0.0
+        if position == "near_support":
+            score = round(6.0 * _score_from_dist(dist_s_abs), 2)
+        elif position == "near_resistance":
+            score = round(-6.0 * _score_from_dist(dist_r_abs), 2)
+        else:
             score = 0.0
 
-        distance_to_support = round((price - support) / support * 100, 2)
-        distance_to_resistance = round((resistance - price) / resistance * 100, 2)
+        # ---------- Дистанції у відсотках (як у твоїй версії) ----------
+        distance_to_support = round(((p - support) / support) * 100.0, 2) if support else 0.0
+        distance_to_resistance = round(((resistance - p) / resistance) * 100.0, 2) if resistance else 0.0
 
         log_message(
-            f"🛡️ {symbol} | Price={price:.4f}, Support={support:.4f}, Resistance={resistance:.4f}, "
-            f"Position={position}, Score={score}"
+            f"🛡️ {symbol} | Price={p:.6f} | S={support:.6f} R={resistance:.6f} | "
+            f"pos={position} | distS={dist_s_abs:.6f} distR={dist_r_abs:.6f} | "
+            f"ATR={atr:.6f} BBw={bb_width_abs:.6f} ({bb_width_pct:.4f}%) | "
+            f"score={score} | breakout={breakout_state}"
         )
 
-        result = {
+        return {
             "support_resistance": {
-                "support": round(support, 6),
-                "resistance": round(resistance, 6),
-                "position": position,
+                "support": round(float(support), 6),
+                "resistance": round(float(resistance), 6),
+                "position": position,  # тільки near_support/between/near_resistance
                 "distance_to_support": distance_to_support,
                 "distance_to_resistance": distance_to_resistance,
-                "score": round(score, 2),
+                "score": float(score),
                 "raw_values": {
-                    "price": round(price, 6),
-                    "recent_lows": recent_lows.tolist(),
-                    "recent_highs": recent_highs.tolist()
+                    "price": round(float(p), 6),
+                    "atr": round(float(atr), 6),
+                    "bb_width_abs": round(float(bb_width_abs), 6),
+                    "bb_width_pct": round(float(bb_width_pct), 6) if bb_width_pct else 0.0,
+                    "swing_lows": [float(x) for x in swing_lows][-50:],
+                    "swing_highs": [float(x) for x in swing_highs][-50:],
+                    "clustered_lows": [float(x) for x in lows_cl][-20:],
+                    "clustered_highs": [float(x) for x in highs_cl][-20:],
+                    "breakout_state": breakout_state,
+                    "near_support_by": {
+                        "abs_dist": round(dist_s_abs, 6),
+                        "via_atr": atr > 0 and (dist_s_abs <= near_thr_atr * atr),
+                        "via_bbw": bb_width_abs > 0 and (dist_s_abs <= near_thr_bw * bb_width_abs),
+                        "via_pct": (dist_s_abs / p) <= near_thr_pct
+                    },
+                    "near_resistance_by": {
+                        "abs_dist": round(dist_r_abs, 6),
+                        "via_atr": atr > 0 and (dist_r_abs <= near_thr_atr * atr),
+                        "via_bbw": bb_width_abs > 0 and (dist_r_abs <= near_thr_bw * bb_width_abs),
+                        "via_pct": (dist_r_abs / p) <= near_thr_pct
+                    }
                 }
             }
         }
-       
-        return result
 
     except Exception as e:
         log_error(f"❌ analyze_support_resistance помилка: {e}")
         return {
-           "support_resistance": {
-              "support": 0.0,
-               "resistance": 0.0,
-               "position": "unknown",
-               "distance_to_support": 0.0,
-               "distance_to_resistance": 0.0,
-               "score": 0.0,
-               "raw_values": {}
+            "support_resistance": {
+                "support": 0.0,
+                "resistance": 0.0,
+                "position": "unknown",
+                "distance_to_support": 0.0,
+                "distance_to_resistance": 0.0,
+                "score": 0.0,
+                "raw_values": {}
             }
         }
-
-       
-        return result
 
 
 

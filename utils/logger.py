@@ -8,6 +8,10 @@ import numpy as np
 import pandas as pd
 from config import bybit
 from config import ACTIVE_TRADES_FILE,MAX_ACTIVE_TRADES
+import tempfile
+from threading import Lock
+
+
 SIDE_BUY = "Buy"
 SIDE_SELL = "Sell"
 
@@ -214,82 +218,6 @@ def log_erx_decision(symbol, reason, blocked=True):
         log_error(f"❌ Не вдалося записати рішення ERX: {e}")
 
 
-from threading import Lock
-
-active_trades_lock = Lock()
-
-def append_active_trade(trade_record: dict):
-    """
-    📝 Логгер: записує trade_record в ActiveTrades.json
-    """
-    try:
-        symbol = trade_record.get("symbol", "UNKNOWN")
-
-        # Завантажуємо існуючі трейди
-        if os.path.exists(ACTIVE_TRADES_FILE):
-            with open(ACTIVE_TRADES_FILE, "r", encoding="utf-8") as f:
-                trades = json.load(f)
-        else:
-            trades = {}
-
-        trades[symbol] = trade_record  # Повний запис
-
-        with open(ACTIVE_TRADES_FILE, "w", encoding="utf-8") as f:
-            json.dump(trades, f, indent=2, ensure_ascii=False)
-
-        log_message(f"📥 Записано трейд {symbol} до ActiveTrades.json")
-    except Exception as e:
-        log_error(f"❌ append_active_trade: {e}")
-
-
-def remove_active_trade(symbol: str):
-    """
-    🧹 Видаляє угоду за символом або trade_id із ActiveTrades (DICT формат)
-    """
-    try:
-        with active_trades_lock:
-            log_message("🔒 [DEBUG] ActiveTrades LOCK отримано для видалення")
-
-            if not os.path.exists(ACTIVE_TRADES_FILE):
-                log_message("⚠️ ActiveTrades файл відсутній — нічого видаляти.")
-                return
-
-            # 📂 Читаємо файл
-            try:
-                with open(ACTIVE_TRADES_FILE, "r", encoding="utf-8") as f:
-                    active_trades = json.load(f)
-            except json.JSONDecodeError:
-                log_error("❌ remove_active_trade: ActiveTrades файл пошкоджений — створюю новий")
-                active_trades = {}
-
-            if isinstance(active_trades, list):
-                log_error("❌ ActiveTrades у форматі list — конвертую у dict.")
-                active_trades = {
-                    t.get("trade_id", f"trade_{i}"): t
-                    for i, t in enumerate(active_trades)
-                }
-
-            # 🧹 Знаходимо trade_id по symbol
-            to_remove = None
-            for tid, data in active_trades.items():
-                if data.get("symbol") == symbol or tid == symbol:
-                    to_remove = tid
-                    break
-
-            if to_remove:
-                removed = active_trades.pop(to_remove, None)
-                log_message(f"🧹 Угода {to_remove} видалена з ActiveTrades")
-            else:
-                log_message(f"⚠️ remove_active_trade: угода {symbol} не знайдена у ActiveTrades")
-
-            # 💾 Перезапис файлу
-            with open(ACTIVE_TRADES_FILE, "w", encoding="utf-8") as f:
-                json.dump(active_trades, f, indent=2, ensure_ascii=False)
-
-            log_message(f"📦 [DEBUG] ActiveTrades оновлено після видалення: {len(active_trades)} угод")
-
-    except Exception as e:
-        log_error(f"❌ remove_active_trade({symbol}): {e}")
 
 
 # 📦 Логування завершених угод
@@ -383,52 +311,6 @@ def append_closed_trade(trade_data: dict):
         log_error(f"❌ append_closed_trade() — помилка: {e}")
 
 
-def get_active_trades():
-    """
-    📂 Отримує активні угоди з файлу або підтягуючи з біржі, якщо файл порожній.
-    Зберігає у ActiveTrades.json лише symbol: timestamp.
-    """
-    try:
-        if not os.path.exists(ACTIVE_TRADES_FILE):
-            log_message("📂 ActiveTrades файл відсутній — створюю новий.")
-            with open(ACTIVE_TRADES_FILE, "w", encoding="utf-8") as f:
-                json.dump({}, f, indent=2)
-            return {}
-
-        with open(ACTIVE_TRADES_FILE, "r", encoding="utf-8") as f:
-            try:
-                data = json.load(f)
-            except json.JSONDecodeError:
-                log_error("❌ ActiveTrades файл пошкоджений — скидаю у {}")
-                data = {}
-                with open(ACTIVE_TRADES_FILE, "w", encoding="utf-8") as fw:
-                    json.dump(data, fw, indent=2)
-
-        if isinstance(data, dict) and data:
-            log_message(f"📦 Завантажено {len(data)} активних угод із файлу.")
-            return data
-
-        log_message("⚠️ ActiveTrades порожній — підтягую з біржі...")
-
-        response = bybit.get_positions(category="linear", settleCoin="USDT")
-        positions = response.get("result", {}).get("list", [])
-        active_trades = {}
-        for pos in positions:
-            size = float(pos.get("size", 0))
-            if size > 0:
-                symbol = pos.get("symbol")
-                active_trades[symbol] = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
-
-        with open(ACTIVE_TRADES_FILE, "w", encoding="utf-8") as f:
-            json.dump(active_trades, f, indent=2, ensure_ascii=False)
-
-        log_message(f"✅ Синхронізовано {len(active_trades)} активних угод із біржі.")
-        return active_trades
-
-    except Exception as e:
-        log_error(f"❌ get_active_trades помилка: {e}")
-        return {}
-
 
 CANDIDATES_LOG_PATH = "logs/scalping_candidates.log"
 
@@ -444,3 +326,151 @@ def log_candidate_simple(symbol, score):
             f.write(f"{time_str} | {symbol} → Score: {score}\n")
     except Exception as e:
         log_message(f"❌ log_candidate_simple error: {e}")
+
+
+# --- ActiveTrades: thread-safe & atomic, key = trade_id ---
+
+
+
+_AT_LOCK = Lock()  # глобальний лок на ActiveTrades
+# використовуємо існуючий ACTIVE_TRADES_FILE з config
+
+def _at_safe_load() -> dict:
+    """Потокобезпечне читання ActiveTrades.json. Завжди повертає dict{trade_id: rec}."""
+    if not os.path.exists(ACTIVE_TRADES_FILE):
+        return {}
+    try:
+        with open(ACTIVE_TRADES_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        if isinstance(data, dict):
+            return data
+        elif isinstance(data, list):
+            # страхувальний ап: конвертація зі списку у dict
+            return {t.get("trade_id", f"trade_{i}"): t for i, t in enumerate(data) if isinstance(t, dict)}
+        return {}
+    except Exception:
+        return {}
+
+def _at_atomic_save(data: dict) -> None:
+    """Атомарний запис ActiveTrades.json через tempfile + os.replace."""
+    content = json.dumps(data, indent=2, ensure_ascii=False)
+    dirn = os.path.dirname(ACTIVE_TRADES_FILE) or "."
+    with tempfile.NamedTemporaryFile("w", delete=False, encoding="utf-8",
+                                     dir=dirn, prefix=".swap_", suffix=".json") as tmp:
+        tmp.write(content)
+        tmp_path = tmp.name
+    os.replace(tmp_path, ACTIVE_TRADES_FILE)
+
+def append_active_trade(trade_record: dict) -> None:
+    """Додає/оновлює запис у ActiveTrades за trade_id."""
+    trade_id = trade_record.get("trade_id")
+    if not trade_id:
+        log_error("❌ append_active_trade: відсутній trade_id")
+        return
+    with _AT_LOCK:
+        trades = _at_safe_load()
+        trades[trade_id] = deep_sanitize(trade_record)
+        _at_atomic_save(trades)
+    log_message(f"📥 Записано трейд {trade_id} до ActiveTrades.json")
+
+def mark_trade_closed(trade_id: str, updates: dict | None = None) -> None:
+    """Позначає угоду закритою та оновлює поля."""
+    with _AT_LOCK:
+        trades = _at_safe_load()
+        if trade_id in trades:
+            trades[trade_id]["closed"] = True
+            if isinstance(updates, dict):
+                trades[trade_id].update(deep_sanitize(updates))
+            _at_atomic_save(trades)
+            log_message(f"🔒 Позначено closed у ActiveTrades для {trade_id}")
+        else:
+            log_message(f"⚠️ mark_trade_closed: {trade_id} не знайдено")
+
+def remove_active_trade(trade_id: str) -> None:
+    """Видаляє угоду з ActiveTrades.json за trade_id."""
+    with _AT_LOCK:
+        trades = _at_safe_load()
+        if trade_id in trades:
+            trades.pop(trade_id, None)
+            _at_atomic_save(trades)
+            log_message(f"🧹 Угода {trade_id} видалена з ActiveTrades")
+        else:
+            log_message(f"⚠️ remove_active_trade: {trade_id} не знайдено")
+
+def prune_inactive_trades(live_ids: set[str]) -> None:
+    """
+    Видаляє записи, яких немає серед live_ids або які мають closed=True.
+    ⚠️ РЕКОМЕНДАЦІЯ: викликати лише для угод із джерелом LIVE_MONITOR.
+    """
+    with _AT_LOCK:
+        trades = _at_safe_load()
+        removed = False
+        for tid in list(trades.keys()):
+            rec = trades[tid]
+            is_live_mon = (rec.get("behavior_summary", {}) or {}).get("entry_reason") == "LIVE_MONITOR"
+            if rec.get("closed") or (is_live_mon and tid not in live_ids):
+                trades.pop(tid, None)
+                removed = True
+        if removed:
+            _at_atomic_save(trades)
+            log_message("🧹 ActiveTrades прунінг виконано")
+
+def get_active_trades() -> dict:
+    """
+    Повертає dict{trade_id: rec} з ActiveTrades.json.
+    (Без автосинху з біржі — за це відповідає monitor_all_open_trades.)
+    """
+    with _AT_LOCK:
+        return _at_safe_load()
+
+
+def reconcile_active_trades_with_exchange():
+    """
+    Звіряє ActiveTrades.json з біржею:
+    - будує live-множину як (symbol, SIDE)
+    - видаляє локальні записи, яких немає на біржі, або які вже closed=True
+    """
+    try:
+        # 1) забираємо живі пози з біржі
+        resp = bybit.get_positions(category="linear", settleCoin="USDT") or {}
+        items = (resp.get("result", {}) or {}).get("list", []) or []
+
+        live = set()
+        for pos in items:
+            size = float(pos.get("size", 0) or 0.0)
+            if size <= 0:
+                continue
+            symbol = pos.get("symbol")
+            side = str(pos.get("positionSide", "")).upper()
+            if not side:
+                side = "LONG" if str(pos.get("side","")).upper()=="BUY" else "SHORT"
+            live.add((symbol, side))
+
+        # 2) вантажимо локальні трейди та чистимо
+        with _AT_LOCK:
+            trades = _at_safe_load()  # dict {trade_id: record}
+            if not isinstance(trades, dict):
+                trades = {}
+
+            before = len(trades)
+            removed_any = False
+
+            for tid in list(trades.keys()):
+                rec = trades.get(tid) or {}
+                if rec.get("closed"):
+                    trades.pop(tid, None)
+                    removed_any = True
+                    continue
+                sym = rec.get("symbol")
+                sd  = str(rec.get("side", "")).upper()
+                if (sym, sd) not in live:
+                    trades.pop(tid, None)
+                    removed_any = True
+
+            if removed_any:
+                _at_atomic_save(trades)
+
+            log_message(f"🧼 Reconcile: live={len(live)}, before={before}, after={len(trades)}")
+
+    except Exception as e:
+        log_error(f"reconcile_active_trades_with_exchange: {e}")

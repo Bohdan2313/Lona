@@ -110,6 +110,35 @@ def build_monitor_snapshot(symbol):
         lstm_pred   = predict_lstm(symbol) or "neutral"
         price_trail = get_recent_price_trail(symbol, minutes=3) or []
 
+        # === bars_in_state з price_trail (без нових залежностей)
+        # рахуємо скільки останніх 1m кроків йшли в одному напрямку
+        bars_in_state = 1
+        try:
+            trail = list(price_trail or [])
+            if len(trail) >= 2:
+                # перетворимо на різниці (дельти барів)
+                diffs = []
+                for i in range(1, len(trail)):
+                    d = (trail[i] or 0.0) - (trail[i-1] or 0.0)
+                    diffs.append(d)
+
+                # поточний напрямок за останнім кроком
+                last_dir = 1 if diffs[-1] > 0 else (-1 if diffs[-1] < 0 else 0)
+
+                # рахуємо послідовні бари в тому ж напрямку від кінця
+                cnt = 1
+                for d in reversed(diffs[:-1]):
+                    dir_ = 1 if d > 0 else (-1 if d < 0 else 0)
+                    if dir_ == last_dir and dir_ != 0:
+                        cnt += 1
+                    else:
+                        break
+                bars_in_state = max(1, cnt)
+        except Exception as e:
+            log_message(f"⚠️ [DEBUG] bars_in_state calc fail: {e}")
+            bars_in_state = 1
+
+
         # === Micro snapshots (локальні)
         micro_1m = {
             "trend": _mt1m_dir,
@@ -152,6 +181,7 @@ def build_monitor_snapshot(symbol):
 
             "indicators": {
                 # сигналові значення з детальних індикаторів
+                "bars_in_state": int(bars_in_state),  # 👈 ДОДАТИ
                 "macd": _macd.get("trend", "neutral"),
                 "rsi": _rsi.get("signal", "neutral"),
                 "stochastic": _stoch.get("signal", "neutral"),
@@ -244,14 +274,22 @@ def build_monitor_snapshot(symbol):
         snapshot["current_price"] = price  # 👈 для сумісності
         log_message(f"✅ [DEBUG] Готовий snapshot для {symbol}")
 
+        # === 15m bar_closed (без дергання біржі зайвий раз)
+        now_ms = int(datetime.datetime.utcnow().timestamp() * 1000)
+        # відкриття поточної 15m свічки (UTC)
+        open_15m_ms = (now_ms // (15*60*1000)) * (15*60*1000)
+        # вважаємо "закритою", якщо пройшло > 15m - 2s (safety)
+        bar_closed_15m = (now_ms - open_15m_ms) >= (15*60*1000 - 2000)
+
         # === Останні дві свічки (для перевірки розвороту)
         try:
             df = get_klines_clean_bybit(symbol, interval="1m", limit=2)
             if df is not None and len(df) >= 2:
                 last_candle = df.iloc[-1].to_dict()
-                prev_candle = df.iloc[-2].to_dict()
+                prev_candle = df.iloc[-2].to_dict() 
                 snapshot["last_candle"] = last_candle
                 snapshot["prev_candle"] = prev_candle
+                snapshot["last_candle"]["closed"] = bool(bar_closed_15m)
         except Exception as e:
             log_error(f"❌ Неможливо отримати останні свічки для {symbol}: {e}")
 
@@ -445,6 +483,88 @@ def convert_snapshot_to_conditions(snapshot):
             "last_candle": snapshot.get("last_candle", {}),
             "prev_candle": snapshot.get("prev_candle", {}),
         }
+               
+               
+         # === Добудова службових полів для анти-фільтрів ===
+
+        # 1) bar_closed (беремо з last_candle.closed; якщо немає — True)
+        lc = snapshot.get("last_candle", {}) or {}
+        bar_closed = bool(lc.get("closed", True))
+
+        # 2) bars_in_state (те, що ми порахували у build_monitor_snapshot)
+        bis = indicators.get("bars_in_state")
+        try:
+            bars_in_state = int(bis) if bis is not None else 1
+        except Exception:
+            bars_in_state = 1
+
+        # 3) atr_percent (%). Якщо ATR і price валідні — рахуємо; інакше — fallback на volatility percentage
+        price_val = snapshot.get("price") or snapshot.get("current_price", 0.0)
+        try:
+            price_val = float(price_val) if price_val is not None else 0.0
+        except Exception:
+            price_val = 0.0
+
+        atr_level = atr_data.get("level", market_trend_data.get("atr_level", 0.0)) or 0.0
+        try:
+            atr_level = float(atr_level)
+        except Exception:
+            atr_level = 0.0
+
+        if price_val > 0.0 and atr_level > 0.0:
+            atr_percent = (atr_level / price_val) * 100.0
+        else:
+            vp = volatility_data.get("percentage", 0.0)
+            try:
+                atr_percent = float(vp) if vp is not None else 0.0
+            except Exception:
+                atr_percent = 0.0
+
+        # 4) normalize support_position до стабільного домену
+        sp = snapshot.get("support_position", "unknown")
+        sp = (str(sp).lower().strip() if isinstance(sp, str) else "unknown")
+        if sp not in {"near_support","between","near_resistance"}:
+            sup = sr_data.get("support")
+            res = sr_data.get("resistance")
+            try:
+                sup = float(sup) if sup is not None else None
+                res = float(res) if res is not None else None
+            except Exception:
+                sup = res = None
+
+            if sup is not None and res is not None and price_val:
+                dist_s = abs(price_val - sup)
+                dist_r = abs(price_val - res)
+                sp = "near_support" if dist_s < dist_r else "near_resistance"
+            else:
+                sp = "between"
+        support_position = sp
+
+        # 5) volume_category → нормальний домен (підтягнемо з snapshot, якщо є)
+        vc_raw = snapshot.get("volume_category", market_trend_data.get("volume_category", "unknown"))
+
+        if isinstance(vc_raw, dict):
+            # спроби витягнути рівень з можливих форматів
+            vc = (
+                vc_raw.get("level") or
+                (vc_raw.get("volume_analysis", {}) or {}).get("level") or
+                "normal"
+            )
+        else:
+            vc = str(vc_raw).lower().strip()
+
+        if vc not in {"very_low", "low", "normal", "high", "very_high"}:
+            vc = "normal"
+
+
+        # 6) покласти в conditions
+        conditions.update({
+            "bar_closed": bar_closed,
+            "bars_in_state": bars_in_state,
+            "atr_percent": atr_percent,
+            "support_position": support_position,
+            "volume_category": vc,
+        })
 
         return conditions
 

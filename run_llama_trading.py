@@ -17,11 +17,10 @@ from utils.logger import get_active_trades
 import threading
 from trading.scalping import monitor_all_open_trades
 from analysis.signal_analysis import analyze_signal_stats 
-from utils.logger import sanitize_signals
 from trading.scalping import monitor_watchlist_candidate
 import traceback
 import threading
-
+from utils.logger import reconcile_active_trades_with_exchange
 
 # === Реєстри потоків ===
 # Потоки конкретних угод (ключ = trade_id)
@@ -42,8 +41,14 @@ def run_llama_trading_pipeline():
         t.start()
         bg_threads["monitor_all_open_trades"] = t
         log_message("🧵 [DEBUG] monitor_all_open_trades запущено у фоні")
+
+        # 🧼 Одноразова звірка і зачистка ActiveTrades.json
+        reconcile_active_trades_with_exchange() 
+
     else:
         log_message("🧵 [DEBUG] monitor_all_open_trades вже працює — пропускаємо старт")
+
+        
 
     # 👁 Запуск моніторингу монет біля підтримки з Watchlist (один раз)
     if "monitor_watchlist_candidate" not in bg_threads:
@@ -57,6 +62,7 @@ def run_llama_trading_pipeline():
     log_message("🔄 [DEBUG] Вхід у головний цикл while True")
     while True:
         try:
+            reconcile_active_trades_with_exchange()
             active_trades = get_active_trades()
             active_count = len(active_trades)
             log_message(f"📦 [DEBUG] Завантажено активних угод: {active_count}")

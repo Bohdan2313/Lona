@@ -127,27 +127,69 @@ def get_current_price(symbol):
 
 
 def get_top_symbols(min_volume=1_000_000, limit=60):
+    """
+    Топ USDT-перпів Bybit:
+    - сортує за turnover24h (USD), з tie-breaker за |price24hPcnt| та openInterestValue
+    - гарантує донабір до `limit`, навіть якщо `min_volume` відсіяв забагато
+    - легкий кеш на 5 хв, щоб не ловити rate-limit
+    """
+    import time
+
+    # простий кеш у процесі
+    global _TOP_CACHE
     try:
-        response = client.get_tickers(category="linear")
-        if not response or "result" not in response or "list" not in response["result"]:
-            log_error("❌ Не вдалося отримати список монет із Bybit")
-            return []
+        _TOP_CACHE
+    except NameError:
+        _TOP_CACHE = {"ts": 0, "data": []}
 
-        symbols = []
-        for item in response["result"]["list"]:
-            symbol = item.get("symbol")
-            volume = float(item.get("turnover24h", 0))
+    try:
+        now = time.time()
+        # 5 хвилин кешу достатньо для вотчліста
+        if _TOP_CACHE["data"] and (now - _TOP_CACHE["ts"] < 300):
+            syms = _TOP_CACHE["data"]
+        else:
+            resp = client.get_tickers(category="linear")
+            if not resp or "result" not in resp or "list" not in resp["result"]:
+                log_error("❌ Не вдалося отримати список монет із Bybit")
+                return []
 
-            if not symbol or not symbol.endswith("USDT"):
-                continue
+            rows = resp["result"]["list"]
+            syms = []
+            for it in rows:
+                sym = it.get("symbol")
+                if not sym or not sym.endswith("USDT"):
+                    continue
 
-            if volume >= min_volume:
-                symbols.append({"symbol": symbol, "volume": volume})
+                # безпечні флоути
+                def f(x, default=0.0):
+                    try:
+                        v = float(x)
+                        # захист від nan/inf
+                        return v if (v == v and abs(v) != float('inf')) else default
+                    except Exception:
+                        return default
 
-        sorted_symbols = sorted(symbols, key=lambda x: x["volume"], reverse=True)
-        top_symbols = [s["symbol"] for s in sorted_symbols[:limit]]
-    
-        return top_symbols
+                turnover = f(it.get("turnover24h"), 0.0)
+                chg_pct = abs(f(it.get("price24hPcnt"), 0.0))  # абсолютний % руху
+                oi_val   = f(it.get("openInterestValue"), 0.0)
+
+                syms.append({"symbol": sym, "turnover": turnover, "abs_chg": chg_pct, "oi": oi_val})
+
+            # головне сортування — оборот, потім рух, потім OI
+            syms.sort(key=lambda x: (x["turnover"], x["abs_chg"], x["oi"]), reverse=True)
+
+            _TOP_CACHE["data"] = syms
+            _TOP_CACHE["ts"] = now
+
+        # жорсткий фільтр за обігом
+        hi = [s["symbol"] for s in syms if s["turnover"] >= float(min_volume)]
+
+        # якщо не вистачає, добираємо з решти, щоб було рівно `limit`
+        if len(hi) < limit:
+            rest = [s["symbol"] for s in syms if s["symbol"] not in hi]
+            hi.extend(rest[: max(0, limit - len(hi))])
+
+        return hi[:limit]
 
     except Exception as e:
         log_error(f"❌ get_top_symbols помилка: {e}")
@@ -271,72 +313,112 @@ GLOBAL_TREND_CACHE = {}
 
 def analyze_global_trend():
     """
-    📈 Аналіз глобального ринку (BTC, ETH, ТОП-альти) — визначає глобальний тренд.
+    📈 Глобальний тренд ринку (BTC, ETH, ТОП-альти) на єдиному горизонті ~24h.
+    - Єдина часовa база: 1h×24, або 15m×96, або 5m×288 (fallback).
+    - Динамічна ре-нормалізація ваг на доступні монети.
+    - Захист від викидів (winsorize ±20% на монету).
+    - Повертає ту ж структуру, що й раніше.
     """
     try:
+        import math, time
         coins = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "ADAUSDT"]
-        weights = {"BTCUSDT": 0.25, "ETHUSDT": 0.25, "SOLUSDT": 0.16, "BNBUSDT": 0.17, "ADAUSDT": 0.17}
-        intervals = ["1h", "15m", "5m"]  # Порядок fallback
-        changes = {}
-        total_score = 0.0
+        base_weights = {"BTCUSDT": 0.25, "ETHUSDT": 0.25, "SOLUSDT": 0.16, "BNBUSDT": 0.17, "ADAUSDT": 0.17}
 
+        # Єдиний горизонт ~24h (під кожен інтервал свій ліміт барів)
+        horizon = [("1h", 24), ("15m", 96), ("5m", 288)]
+
+        changes = {}          # coin -> pct change за ~24h
+        available_weights = {}
+
+        # Збирання змін по монетах на уніфікованому горизонті
         for coin in coins:
             coin_change = None
+            used_interval = None
 
-            for interval in intervals:
-                df = get_klines_clean_bybit(coin, interval=interval, limit=24)
-                if df is not None and not df.empty:
-                    start_price = df["close"].iloc[0]
-                    end_price = df["close"].iloc[-1]
-                    pct_change = ((end_price - start_price) / start_price) * 100
-                    coin_change = round(pct_change, 2)
-                    log_message(f"📊 {coin} [{interval}]: {coin_change:.2f}%")
-                    break  # ✅ Використати перший доступний інтервал з даними
-                else:
-                    log_message(f"⚠️ Немає даних для {coin} на {interval}")
+            for interval, needed in horizon:
+                df = get_klines_clean_bybit(coin, interval=interval, limit=needed)
+                if df is None or df.empty or len(df) < needed:
+                    log_message(f"⚠️ Немає достатньо даних для {coin} на {interval} (потрібно {needed}).")
+                    continue
+
+                start_price = float(df["close"].iloc[0])
+                end_price   = float(df["close"].iloc[-1])
+                if not (math.isfinite(start_price) and math.isfinite(end_price)) or start_price <= 0:
+                    log_message(f"⚠️ {coin} {interval}: невалідні ціни для розрахунку.")
+                    continue
+
+                pct_change = ((end_price - start_price) / start_price) * 100.0
+
+                # М’яка обрізка викидів ±20% на монету (щоб один шпиль не з’їв усіх)
+                pct_change = max(-20.0, min(20.0, pct_change))
+
+                coin_change = round(pct_change, 2)
+                used_interval = interval
+                break  # ✅ знайшли уніфікований горизонт для монети
 
             if coin_change is not None:
                 changes[coin] = coin_change
-                total_score += coin_change * weights.get(coin, 0.1)
+                available_weights[coin] = base_weights.get(coin, 0.1)
+                log_message(f"📊 {coin} [{used_interval}~24h]: {coin_change:.2f}%")
             else:
-                log_message(f"⚠️ {coin} пропущено — відсутні дані на всіх інтервалах.")
+                log_message(f"⚠️ {coin} пропущено — відсутні дані на всіх інтервалах/горизонтах.")
 
-        # === Визначення напрямку
-        if total_score > 0.7:
+        if not changes:
+            # Нічого не зібрали — повертаємо нейтраль і/або кеш
+            raise RuntimeError("No data collected for global trend.")
+
+        # Ре-нормалізація ваг на доступні монети
+        wsum = sum(available_weights.values())
+        weights = {c: (available_weights[c] / wsum) for c in available_weights} if wsum > 0 else {}
+
+        # Зважений сумарний скор (у %)
+        total_score = 0.0
+        for c, chg in changes.items():
+            w = weights.get(c, 0.0)
+            total_score += chg * w
+
+        # Пороги напряму (адаптивні до єдиного горизонту ~24h)
+        # deadband для нейтралі — ±0.5%; виражений тренд — > +1.0% / < -1.0%
+        if total_score > 1.0:
             direction = "bullish"
-        elif total_score < -0.7:
+        elif total_score < -1.0:
             direction = "bearish"
-        else:
+        elif -0.5 <= total_score <= 0.5:
             direction = "neutral"
+        else:
+            # легкий зсув: збережемо попередню триаду, не вводячи "slightly_*"
+            direction = "bullish" if total_score > 0 else "bearish"
 
         result = {
             "global_trend": {
                 "direction": direction,
                 "score": round(total_score, 2),
-                "raw_values": changes
+                "raw_values": changes  # coin -> pct
             }
         }
 
-        log_message(f"🌍 Глобальний тренд: {direction.upper()} | Score: {round(total_score, 2)} | Зміни: {changes}")
+        log_message(f"🌍 Глобальний тренд (~24h): {direction.upper()} | Score: {result['global_trend']['score']} | Зміни: {changes}")
 
-        # === Кешування
+        # === Кешування (як у тебе)
         GLOBAL_TREND_CACHE["last"] = {
             "timestamp": time.time(),
             "data": result
         }
-
         return result
 
     except Exception as e:
         log_error(f"❌ analyze_global_trend помилка: {e}")
 
-        # 🛡 Використати кеш, якщо є
-        cached = GLOBAL_TREND_CACHE.get("last")
-        if cached and (time.time() - cached["timestamp"]) < 300:
-            log_message("♻️ Використано кешований глобальний тренд.")
-            return cached["data"]
+        # ♻️ Використати кеш, якщо є (до 5 хв)
+        try:
+            cached = GLOBAL_TREND_CACHE.get("last")
+            if cached and (time.time() - cached["timestamp"]) < 300:
+                log_message("♻️ Використано кешований глобальний тренд.")
+                return cached["data"]
+        except Exception:
+            pass
 
-        # 📦 Повернути neutral як fallback
+        # 📦 Fallback: нейтраль
         return {
             "global_trend": {
                 "direction": "neutral",

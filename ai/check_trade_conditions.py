@@ -80,7 +80,6 @@ CheckTradeConditions — 15m regime-aware (drop-in) [ACTIVE MODE + TREND ALIGNME
 - API: evaluate_long, evaluate_short, evaluate_both(raw_conditions: dict) -> dict
 - Працює з твоїми існуючими полями.
 - Поєднує 2 сетапи: Mean-Reversion (відскок) і Momentum (пробій).
-- Додано жорстке правило: не торгуємо проти глобального тренду; плюс мікро-трендовий фільтр (5m).
 
 Очікувані поля:
 - bar_closed: bool (закрита 15m свічка)
@@ -300,20 +299,20 @@ W_BONUS  = 1.2
 THRESH_LONG  = 4.5
 THRESH_SHORT = 4.5
 
-# Політика вирівнювання по тренду
+# Політика вирівнювання по тренду (залишаємо вимкнено — окремо зроблено жорсткий шорт-гейт нижче)
 TREND_ALIGNMENT = {
-    "align_with_global": False,              # не торгувати проти глобального тренду
-    "align_with_micro5": False,              # і не йти проти 5m мікротренду
-    "allow_flat_as_neutral": False,          # flat/neutral не блокує
+    "align_with_global": False,
+    "align_with_micro5": False,
+    "allow_flat_as_neutral": False,
     "bearish_block_levels": {"bearish","strong_bearish"},
     "bullish_block_levels": {"bullish","strong_bullish"},
     "micro_bearish_levels": {"bearish","strong_bearish"},
     "micro_bullish_levels": {"bullish","strong_bullish"},
 }
 
-# Анти-фальстарт гварди (активний режим)
+# Анти-фальстарт гварди (для лонгів без змін; додаткові жорсткі правила для шортів — у _apply_anti_filters)
 ANTI_FALSE_OPEN = {
-    "require_closed_candle": False,     # тільки закрита 15m
+    "require_closed_candle": False,
     "hysteresis_bars": 2,
     "min_pair_hits_long": 0,
     "min_pair_hits_short": 0,
@@ -344,16 +343,14 @@ CONFIRM_SHORT = [
     ("pat_bearish_engulfing", "yes"),
 ]
 
-# Блокатори (розширені по глобальному тренду)
+# Блокатори (залишив як було)
 BLOCK_LONG  = [
     ("global_trend", "strong_bearish"),
-    ("global_trend", "bearish"),          # ✚ нове: блокуємо LONG і при просто bearish
-    
+    ("global_trend", "bearish"),
 ]
 BLOCK_SHORT = [
     ("global_trend", "strong_bullish"),
-    ("global_trend", "bullish"),          # ✚ нове: блокуємо SHORT і при просто bullish
-    
+    ("global_trend", "bullish"),
 ]
 
 # ===================== Rule Engine =====================
@@ -513,7 +510,6 @@ def _trend_alignment_blocks(side: str, c: Dict[str, Any]) -> str | None:
     # Мікро 5m
     if TREND_ALIGNMENT.get("align_with_micro5", True):
         if side == "LONG" and m5 in micro_bear:
-            # Якщо flat вважаємо нейтральним — не блокуємо на flat.
             if not (allow_flat and m5 in {"flat","neutral"}):
                 return f"align: micro5_bear({m5})"
         if side == "SHORT" and m5 in micro_bull:
@@ -526,13 +522,43 @@ def _apply_anti_filters(side: str, c: Dict[str, Any], res_total: Dict[str, Any],
     if not allow:
         return allow, res_total
 
-    # 0) Вирівнювання по тренду (нове)
+    # ---------- ДОДАТКОВІ ЖОРСТКІ ПРАВИЛА ДЛЯ ШОРТІВ ----------
+    if side == "SHORT":
+        g = str(c.get("global_trend", "neutral")).lower()
+        m5 = str(c.get("microtrend_5m", "neutral")).lower()
+
+        # 0) Шорт лише у bearish/strong_bearish
+        if g not in {"bearish", "strong_bearish"}:
+            allow = False
+            res_total["reasons"].append("short: require_global_bearish")
+        # 1) Не шортимо коли micro 5m bullish/strong_bullish
+        if allow and m5 in {"bullish", "strong_bullish"}:
+            allow = False
+            res_total["reasons"].append("short: micro5_bullish_block")
+        # 2) Потрібна закрита 15m свічка
+        if allow and not bool(c.get("bar_closed", True)):
+            allow = False
+            res_total["reasons"].append("short: need_closed_15m")
+        # 3) Мінімум 2 збіги з парних правил
+        if allow and int(res_total.get("_pair_hits_count", 0)) < 2:
+            allow = False
+            res_total["reasons"].append("short: need_pair_hits>=2")
+        # 4) Хоч один підтверджувальний сигнал
+        if allow and not _any_of(c, CONFIRM_SHORT):
+            allow = False
+            res_total["reasons"].append("short: need_confirm_any")
+
+    if not allow:
+        return allow, res_total
+
+    # ---------- БАЗОВІ (як було) ----------
+    # 0) Вирівнювання по тренду (вимкнено флагами; лишаємо на випадок, якщо ти увімкнеш)
     align_reason = _trend_alignment_blocks(side, c)
     if align_reason:
         allow = False
         res_total["reasons"].append(align_reason)
 
-    # 1) Закрита свічка
+    # 1) Закрита свічка (глобальний прапор; для лонгів — без змін)
     if allow and ANTI_FALSE_OPEN["require_closed_candle"] and not bool(c.get("bar_closed", True)):
         allow = False
         res_total["reasons"].append("anti: wait_close")
@@ -556,7 +582,7 @@ def _apply_anti_filters(side: str, c: Dict[str, Any], res_total: Dict[str, Any],
             allow = False
             res_total["reasons"].append(f"anti: atr_out({round(float(ap),3)} not in {lo}-{hi})")
 
-    # 4) Мінімальна к-ть підтверджень (у ACTIVE режимі, як правило, 0)
+    # 4) Мінімальна к-ть підтверджень / блокатори (як було)
     if side == "LONG":
         if allow and not _meets_pairs_quorum(res_total, int(ANTI_FALSE_OPEN.get("min_pair_hits_long", 0) or 0)):
             allow = False

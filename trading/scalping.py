@@ -43,6 +43,35 @@ from utils.logger import mark_trade_closed, remove_active_trade, prune_inactive_
 
 
 
+# ---- OpenTrades helpers (рахуємо лише незакриті) ----------------------------
+def get_open_trades_count() -> int:
+    try:
+        trades = load_active_trades() or {}
+        if isinstance(trades, dict):
+            return sum(1 for t in trades.values() if not t.get("closed"))
+        elif isinstance(trades, list):
+            return sum(1 for t in trades if isinstance(t, dict) and not t.get("closed"))
+    except Exception as e:
+        log_error(f"[get_open_trades_count] {e}")
+    return 0
+
+def has_open_trade_for(symbol: str) -> bool:
+    try:
+        trades = load_active_trades() or {}
+        if isinstance(trades, dict):
+            for rec in trades.values():
+                if rec.get("symbol") == symbol and not rec.get("closed"):
+                    return True
+        elif isinstance(trades, list):
+            for rec in trades:
+                if isinstance(rec, dict) and rec.get("symbol") == symbol and not rec.get("closed"):
+                    return True
+    except Exception as e:
+        log_error(f"[has_open_trade_for] {e}")
+    return False
+
+
+
 ACTIVE_TRADES_FILE_SIMPLE = "data/ActiveTradesSimple.json"
 
 # === реєстри потоків ===
@@ -802,11 +831,16 @@ def execute_scalping_trade(target, balance, position_side, behavior_summary, man
             if balance is None:
                 balance = get_usdt_balance()
 
-            # 🛡 ліміт активних угод
-            active_trades = load_active_trades()
-            if len(active_trades) >= MAX_ACTIVE_TRADES:
-                log_message(f"🛑 [SAFEGUARD] Перед відправкою ордера → вже відкрито {len(active_trades)} угод")
+            # 🛡 ліміт активних угод (рахуємо лише незакриті)
+            if get_open_trades_count() >= MAX_ACTIVE_TRADES:
+                log_message(f"🛑 [SAFEGUARD] Ліміт досягнуто: {get_open_trades_count()} ≥ {MAX_ACTIVE_TRADES}")
                 return
+
+            # 🛡 антидубль по символу (якщо вже є активна угода по цьому символу)
+            if has_open_trade_for(symbol):
+                log_message(f"⏳ [SAFEGUARD] Вже є відкрита угода по {symbol} → пропуск")
+                return
+
 
             # 🧭 напрямок
             side_norm = (position_side or "").upper()
@@ -1023,7 +1057,7 @@ def manage_open_trade(symbol, entry_price, side, amount, leverage, behavior_summ
 
     # ===== Конфіг =====
     try:
-        from config import SMART_AVG, TP_EPSILON, USE_EXCHANGE_TP
+        from config import SMART_AVG, TP_EPSILON,USE_EXCHANGE_TP
     except Exception:
         SMART_AVG = {}
         TP_EPSILON = 0.0007
@@ -1087,6 +1121,11 @@ def manage_open_trade(symbol, entry_price, side, amount, leverage, behavior_summ
     tp_price = Decimal(str(smart.get("tp_price", float(avg_entry * (Decimal("1")+Decimal(str(tp_from_avg_pct)) if is_long else Decimal("1")-Decimal(str(tp_from_avg_pct)))))))
     tp_order_id = smart.get("tp_order_id")
 
+    # --- анти-спам між докупками (сек) ---
+    MIN_SECONDS_BETWEEN_ADDS = int(SMART_AVG.get("min_seconds_between_adds", 45))
+    _last_add_ts = 0.0
+
+
     peak_pnl_percent = -9999.0
     worst_pnl_percent =  9999.0
     trade_closed = False
@@ -1136,7 +1175,9 @@ def manage_open_trade(symbol, entry_price, side, amount, leverage, behavior_summ
             symbol=symbol_clean,
             side=("Sell" if is_long else "Buy"),
             position_side=side,
-            leverage=leverage
+            leverage=leverage,
+            amount_to_use=0.0,          # ← обов’язково
+            bypass_price_check=True 
         )
         closed_ok = False
         try:
@@ -1265,7 +1306,13 @@ def manage_open_trade(symbol, entry_price, side, amount, leverage, behavior_summ
 
             # ====== DCA: докупка ======
             if dca_enabled and adds_done < max_adds and price_ok_for_dca(current_price):
-                # ATR gate (опційно)
+                # пауза між докупками (анти-спам)
+                now_ts = time.time()
+                if now_ts - _last_add_ts < MIN_SECONDS_BETWEEN_ADDS:
+                    log_debug(f"[DCA] skip add: {now_ts - _last_add_ts:.1f}s < {MIN_SECONDS_BETWEEN_ADDS}s")
+                    time.sleep(check_interval)
+                    continue
+
                 if atr_pause_pct > 0:
                     try:
                         snapshot = build_monitor_snapshot(symbol_clean)
@@ -1337,6 +1384,7 @@ def manage_open_trade(symbol, entry_price, side, amount, leverage, behavior_summ
                 avg_entry = Decimal(str((prev_avg * prev_qty + fill_price * filled_qty) / total_qty))
                 total_margin_used += float(add_margin)
                 adds_done += 1
+                _last_add_ts = now_ts
 
                 # Оновлене планове TP (на біржу — лише за бажанням прапорця)
                 tp_price = calc_tp_from_avg()
@@ -1379,7 +1427,9 @@ def manage_open_trade(symbol, entry_price, side, amount, leverage, behavior_summ
                                 symbol=symbol_clean,
                                 side=("Sell" if is_long else "Buy"),
                                 position_side=side,
-                                leverage=leverage
+                                leverage=leverage,
+                                amount_to_use=0.0,
+                                bypass_price_check=True
                             )
                             # часткове закриття лише якщо така функція є в executor.py
                             if hasattr(ex, "close_position_qty"):

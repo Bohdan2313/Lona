@@ -18,7 +18,7 @@ SKIP_1000_TOKENS = True
 ACTIVE_TRADES_FILE = "data/active_trades.json"
 ENABLE_LOGGING = True
 TRADING_CYCLE_PAUSE = 60          # сек між циклами
-MAX_ACTIVE_TRADES = 5
+MAX_ACTIVE_TRADES = 10
 DRY_RUN = False
 
 # ============================ 📈 АНАЛІТИКА ============================
@@ -42,6 +42,8 @@ MANUAL_BALANCE = 6.0  # $ старт на угоду (маржа першої с
 USE_MANUAL_LEVERAGE = True
 MANUAL_LEVERAGE = 5     # базове плече (узгоджене зі SMART_AVG)
 
+USE_EXCHANGE_TP = False
+
 TP_USE_IOC = True  # якщо True → TP ордер буде IOC (миттєвий), а не PostOnly
 
 TP_EPSILON       = 0.0007 # 0.07% м'який допуск для софт TP у manage_open_trade
@@ -57,7 +59,7 @@ SMART_AVG = {
     "base_margin": 100.0,          # стартова маржа на угоду (1-а сходинка)
 
     "max_adds": 5,                 # кількість докупок максимум
-    "dca_step_pct": 0.045,         # крок між рівнями (від середньої), 4.5% ~ sweet spot на 15m
+    "dca_step_pct": 0.025,         # крок між рівнями (від середньої), 4.5% ~ sweet spot на 15m
     "dca_mode": "equal",           # "equal" або "progressive"
     "dca_factor": 1.2,             # якщо progressive — помірний мультиплікатор
 

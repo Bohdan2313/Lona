@@ -4,10 +4,11 @@ from trading.executor import round_qty_bybit
 import time
 from analysis.indicators import get_volatility,analyze_support_resistance
 import traceback
-from utils.tools import check_position_with_retry
+from utils.logger import check_position_with_retry
+from utils.tools import get_active_trade
 from datetime import datetime, timedelta
 from trading.executor import get_current_futures_price
-from utils.logger import log_message, log_error, log_debug
+from utils.logger import log_message, log_error, log_debug,resolve_trade_id
 from trading.executor import OrderExecutor
 from trading.risk import calculate_amount_to_use
 from config import bybit
@@ -23,10 +24,9 @@ import os
 from utils.telegram_bot import send_telegram_message
 import random  
 from config import MAX_ACTIVE_TRADES
-from config import ACTIVE_TRADES_FILE
 from utils.logger import append_active_trade
 import threading
-from config import USE_MANUAL_BALANCE, MANUAL_BALANCE, USE_MANUAL_LEVERAGE, MANUAL_LEVERAGE
+from config import  USE_MANUAL_LEVERAGE, MANUAL_LEVERAGE
 from utils.tools import get_usdt_balance
 from analysis.market import get_top_symbols
 from decimal import Decimal, getcontext
@@ -39,37 +39,9 @@ import random
 import numpy as np
 from utils.signal_logger import log_final_trade_result
 from uuid import uuid4
-from utils.logger import mark_trade_closed, remove_active_trade, prune_inactive_trades, _at_safe_load
-
-
-
-# ---- OpenTrades helpers (рахуємо лише незакриті) ----------------------------
-def get_open_trades_count() -> int:
-    try:
-        trades = load_active_trades() or {}
-        if isinstance(trades, dict):
-            return sum(1 for t in trades.values() if not t.get("closed"))
-        elif isinstance(trades, list):
-            return sum(1 for t in trades if isinstance(t, dict) and not t.get("closed"))
-    except Exception as e:
-        log_error(f"[get_open_trades_count] {e}")
-    return 0
-
-def has_open_trade_for(symbol: str) -> bool:
-    try:
-        trades = load_active_trades() or {}
-        if isinstance(trades, dict):
-            for rec in trades.values():
-                if rec.get("symbol") == symbol and not rec.get("closed"):
-                    return True
-        elif isinstance(trades, list):
-            for rec in trades:
-                if isinstance(rec, dict) and rec.get("symbol") == symbol and not rec.get("closed"):
-                    return True
-    except Exception as e:
-        log_error(f"[has_open_trade_for] {e}")
-    return False
-
+from utils.logger import mark_trade_closed, remove_active_trade, prune_inactive_trades
+from utils.allocator import plan_allocation_for_new_trade
+from utils.allocator import  has_open_trade_for,get_open_trades_count
 
 
 ACTIVE_TRADES_FILE_SIMPLE = "data/ActiveTradesSimple.json"
@@ -96,22 +68,8 @@ RECENT_SCALPING_FILE = "data/recent_scalping.json"
 def _symbol_clean(s: str) -> str:
     return str(s).split("_")[0]
 
-# ---- ActiveTrades accessors -------------------------------------------------
-def get_active_trade(trade_id: str):
-    """
-    Повертає один трейд з load_active_trades() (який у тебе вже є).
-    """
-    try:
-        trades = load_active_trades() or {}
-        if isinstance(trades, dict):
-            return trades.get(trade_id)
-        elif isinstance(trades, list):
-            for t in trades:
-                if isinstance(t, dict) and t.get("trade_id") == trade_id:
-                    return t
-    except Exception as e:
-        log_error(f"[compat] get_active_trade error: {e}")
-    return None
+
+
 
 def update_active_trade(trade_id: str, patch: dict):
     """
@@ -187,50 +145,137 @@ def place_or_update_tp(symbol: str, side: str, quantity: float, avg_entry: float
         return None
 
 
-# ---- Liq buffer check (консервативно) --------------------------------------
+# ---- Liq buffer check (з симуляцією після докупки + гард-клейми) -----------------
+import math
+
 def has_liq_buffer_after_add(symbol: str, side: str, extra_qty: float, min_buffer: float, leverage: int):
     """
-    Оцінює запас до ліквідації ПОТОЧНОЇ позиції і порівнює з порогом.
-    Якщо Bybit віддає liqPrice — використовуємо її; якщо ні, робимо м'який True.
+    Перевіряє буфер до ліквідації. Якщо liqPrice є:
+      - рахує поточний буфер;
+      - якщо він < порога, симулює додавання extra_qty за mark_price,
+        перераховує середню та оцінює новий liqPrice ~ поточний_liq * clamp(new_avg/cur_avg).
+        Якщо симульований буфер >= порога — дозволяє докупку.
+    Якщо liqPrice недоступний/некоректний — поводимось поблажливо (True).
+    Примітка: дефолт «permissive True» збережено для зворотної сумісності.
     """
     try:
         symbol_clean = _symbol_clean(symbol)
-        resp = bybit.get_positions(category="linear", symbol=symbol_clean)
-        lst = resp.get("result", {}).get("list", [])
-        if not lst:
-            log_message("[compat] has_liq_buffer_after_add: no positions → True")
-            return True
 
+        # Нормалізуємо поріг: підтримка як 0.40, так і 40 (%)
+        thr = float(min_buffer)
+        if not math.isfinite(thr):
+            thr = 0.40
+        if thr > 1.0:
+            thr = thr / 100.0
+        thr = min(max(thr, 0.0), 0.95)  # розумні межі
+
+        # Поточна ціна (mark)
         mark_price = float(get_current_futures_price(symbol_clean) or 0.0)
-        if mark_price <= 0:
+        if not math.isfinite(mark_price) or mark_price <= 0.0:
+            log_message("[liq] invalid mark_price → allow add (permissive)")
             return True
 
-        side_u = side.upper()
-        # беремо першу релевантну позицію
-        for pos in lst:
-            size = float(pos.get("size", 0) or 0)
-            if size <= 0: 
-                continue
-            pos_side = str(pos.get("side", "")).upper()  # BUY / SELL
-            if (side_u in ("LONG","BUY") and pos_side != "BUY") or (side_u in ("SHORT","SELL") and pos_side != "SELL"):
-                continue
-            liq = pos.get("liqPrice") or pos.get("liq_price") or pos.get("liqPrice_e")
-            if liq is None:
-                # нема точного ліквіда, не блочимо
-                log_message("[compat] liqPrice not available → allow add (permissive)")
-                return True
-            liq = float(liq)
-            if side_u in ("LONG","BUY"):
-                buf = (mark_price - liq) / mark_price
-            else:
-                buf = (liq - mark_price) / mark_price
-            ok = (buf >= float(min_buffer))
-            log_message(f"[compat] has_liq_buffer_after_add: buf={buf:.3f} vs min={min_buffer:.3f} → {ok}")
-            return ok
+        # Позиції
+        resp = bybit.get_positions(category="linear", symbol=symbol_clean)
+        lst = (resp.get("result", {}) or {}).get("list", []) or []
+        if not lst:
+            log_message("[liq] no positions → allow add (permissive)")
+            return True
 
+        side_u = str(side).upper()
+        for pos in lst:
+            size = float(pos.get("size", 0) or 0.0)
+            if size <= 0:
+                continue
+
+            pos_side = str(pos.get("side", "")).upper()  # "BUY" / "SELL"
+            if (side_u in ("LONG", "BUY") and pos_side != "BUY") or \
+               (side_u in ("SHORT", "SELL") and pos_side != "SELL"):
+                continue
+
+            # liqPrice (будь-який можливий ключ)
+            liq_raw = pos.get("liqPrice") or pos.get("liq_price") or pos.get("liqPrice_e")
+            try:
+                liq = float(liq_raw)
+            except Exception:
+                liq = float("nan")
+
+            if (liq_raw is None) or (not math.isfinite(liq)) or (liq <= 0.0):
+                log_message("[liq] liqPrice not available/invalid → allow add (permissive)")
+                return True
+
+            # Поточна середня (avg)
+            avg_keys = ["avgPrice", "avgEntryPrice", "avg_entry_price", "entryPrice"]
+            cur_avg = None
+            for k in avg_keys:
+                if k in pos and pos[k] not in (None, "", 0, "0"):
+                    try:
+                        cur_avg = float(pos[k])
+                        if math.isfinite(cur_avg) and cur_avg > 0.0:
+                            break
+                    except Exception:
+                        pass
+
+            # Поточний буфер
+            if side_u in ("LONG", "BUY"):
+                cur_buf = (mark_price - liq) / mark_price
+            else:
+                cur_buf = (liq - mark_price) / mark_price
+
+            ok_now = (cur_buf >= thr)
+            log_message(f"[liq] side={side_u} cur_buf={cur_buf:.4f} vs thr={thr:.4f} → {ok_now}")
+
+            if ok_now:
+                return True
+
+            # Якщо не пройшли поріг — спробуємо симуляцію «після докупки»
+            if (cur_avg is None) or (not math.isfinite(cur_avg)) or (cur_avg <= 0.0):
+                log_message("[liq] no valid cur_avg → conservative False")
+                return False
+
+            cur_qty = float(size)
+            ex_qty = float(extra_qty or 0.0)
+            if ex_qty <= 0.0:
+                log_message("[liq] extra_qty<=0 → conservative False")
+                return False
+
+            # Лог для прозорості симуляції
+            log_message(
+                f"[liq] sim input: side={side_u} cur_avg={cur_avg:.6f} cur_qty={cur_qty:.6f} "
+                f"extra_qty={ex_qty:.6f} mark={mark_price:.6f}"
+            )
+
+            new_qty = cur_qty + ex_qty
+            if new_qty <= 0:
+                log_message("[liq] new_qty<=0 → conservative False")
+                return False
+
+            new_avg = (cur_avg * cur_qty + mark_price * ex_qty) / new_qty
+            # масштабуємо liq пропорційно зміні середньої, але клампимо коефіцієнт для стабільності
+            ratio = new_avg / max(cur_avg, 1e-12)
+            ratio = min(max(ratio, 0.5), 1.5)  # кламп 0.5–1.5 як обмеження евристики
+            new_liq = liq * ratio
+
+            if side_u in ("LONG", "BUY"):
+                new_buf = (mark_price - new_liq) / mark_price
+            else:
+                new_buf = (new_liq - mark_price) / mark_price
+
+            ok_sim = (new_buf >= thr)
+            log_message(
+                f"[liq] what-if: new_avg={new_avg:.6f}, new_liq≈{new_liq:.6f}, "
+                f"new_buf={new_buf:.4f} vs thr={thr:.4f} → {ok_sim}"
+            )
+
+            return bool(ok_sim)
+
+        # Якщо релевантної позиції не знайшли — поблажливо дозволяємо
+        log_message("[liq] no matching side position → allow add (permissive)")
         return True
+
     except Exception as e:
-        log_error(f"[compat] has_liq_buffer_after_add error: {e}")
+        log_error(f"[liq] has_liq_buffer_after_add error: {e}")
+        # Перебої з API/даними — краще не ламати DCA-потік: залишаємо permissive True
         return True
 
 
@@ -686,7 +731,7 @@ def find_best_scalping_targets():
             log_debug("monitor_watchlist_candidate запущено")
 
 
-        symbols = get_top_symbols(limit=20)
+        symbols = get_top_symbols(limit=15)
         random.shuffle(symbols)
         log_debug(f"Монети для аналізу: {symbols}")
 
@@ -827,13 +872,14 @@ def execute_scalping_trade(target, balance, position_side, behavior_summary, man
                 return str(obj)
 
         try:
-            # 🔁 фолбек балансу
+            # 🔁 фолбек балансу (для логів/діагностики; на розмір входу це не впливає)
             if balance is None:
                 balance = get_usdt_balance()
 
-            # 🛡 ліміт активних угод (рахуємо лише незакриті)
-            if get_open_trades_count() >= MAX_ACTIVE_TRADES:
-                log_message(f"🛑 [SAFEGUARD] Ліміт досягнуто: {get_open_trades_count()} ≥ {MAX_ACTIVE_TRADES}")
+            # 🛡 ліміт активних угод (грубий гейт; детальний — в аллокаторі)
+            open_now = get_open_trades_count()
+            if open_now >= MAX_ACTIVE_TRADES:
+                log_message(f"🛑 [SAFEGUARD] Ліміт досягнуто: {open_now} ≥ {MAX_ACTIVE_TRADES}")
                 return
 
             # 🛡 антидубль по символу (якщо вже є активна угода по цьому символу)
@@ -841,6 +887,21 @@ def execute_scalping_trade(target, balance, position_side, behavior_summary, man
                 log_message(f"⏳ [SAFEGUARD] Вже є відкрита угода по {symbol} → пропуск")
                 return
 
+            # ======================= [ALLOCATOR] резерв під повну DCA-драбину =======================
+            # Використовуємо динамічний аллокатор: якщо не тягнемо повний план — НЕ відкриваємо.
+            alloc = plan_allocation_for_new_trade(symbol)
+            if not alloc or not alloc.get("allow"):
+                log_message(f"🛑 [ALLOCATOR] Blocked {symbol}: {alloc.get('reason') if isinstance(alloc, dict) else 'no_alloc'}")
+                return
+
+            allocated_base_margin = float(alloc.get("amount_to_use", 0.0))
+            # Для прозорості логів — як ми виглядаємо відносно динамічного ліміту
+            if "effective_limit" in alloc and "open_trades" in alloc:
+                log_message(
+                    f"📊 [ALLOCATOR] capacity: open={alloc.get('open_trades')}/{alloc.get('effective_limit')} "
+                    f"(desired={alloc.get('desired')}, capacity={alloc.get('capacity_total')})"
+                )
+            # =========================================================================================
 
             # 🧭 напрямок
             side_norm = (position_side or "").upper()
@@ -869,7 +930,7 @@ def execute_scalping_trade(target, balance, position_side, behavior_summary, man
                     log_error(f"❌ Conditions для {symbol} не створені → пропуск")
                     return
 
-            # 🎯 SCORE → тільки для sizing
+            # 🎯 SCORE → тільки для sizing у твоїх логах (на суму вже не впливає)
             score = 0.0
             if isinstance(behavior_summary, dict):
                 try:
@@ -890,14 +951,18 @@ def execute_scalping_trade(target, balance, position_side, behavior_summary, man
                 if manual_leverage is not None
                 else (MANUAL_LEVERAGE if USE_MANUAL_LEVERAGE else SMART_AVG.get("leverage", 5))
             )
-            amount = (
-                manual_amount
-                if manual_amount is not None
-                else (MANUAL_BALANCE if USE_MANUAL_BALANCE else calculate_amount_to_use(score, balance, leverage))
-            )
+
+            # ======================= [ALLOCATOR] джерело стартової суми =======================
+            # manual_amount має пріоритет, але тільки після allow=True від аллокатора
+            amount = float(manual_amount) if manual_amount is not None else float(allocated_base_margin)
+            if amount <= 0:
+                log_message(f"🛑 [ALLOCATOR] {symbol}: non-positive amount (amount={amount}) → пропуск")
+                return
+            # Підстрахуємось від мікро-входів нижче біржових мінімумів
             if amount < 5:
                 log_message(f"⚠️ Сума {amount} < $5 → встановлено $5")
-                amount = 5
+                amount = 5.0
+            # =================================================================================
 
             # 🎯 Цільова ціна
             target_price = target.get("target_price")
@@ -907,10 +972,17 @@ def execute_scalping_trade(target, balance, position_side, behavior_summary, man
                     or conditions.get("current_price")
                     or get_current_futures_price(symbol)
                 )
+            if target_price is None:
+                log_error(f"❌ Некоректне target_price для {symbol} → пропуск")
+                return
 
             log_message(
                 f"📤 Відправка ордера: {symbol} | Сума(маржа): {amount} | "
                 f"Плече: {leverage} | Side: {side} | PositionSide: {side_norm}"
+            )
+            log_message(
+                f"🧮 [ALLOCATOR] reserved_per_trade≈{alloc.get('reserved_per_trade'):.2f} USDT | "
+                f"slots_left={alloc.get('slots_left', 'n/a')}"
             )
 
             # ❗ Всі біржові дії — через OrderExecutor
@@ -929,10 +1001,13 @@ def execute_scalping_trade(target, balance, position_side, behavior_summary, man
                 return
 
             entry_price = float(result["entry_price"])
-            # Якщо executor не повертає qty — оцінюємо (для внутр. стейту DCA)
             filled_qty = float(result.get("quantity") or 0.0)
             if filled_qty <= 0:
-                filled_qty = amount * leverage / entry_price
+                # оцінка кількості чисто для внутрішньої DCA-стейт-машини
+                try:
+                    filled_qty = amount * leverage / max(entry_price, 1e-8)
+                except Exception:
+                    filled_qty = 0.0
 
             send_telegram_message(
                 f"🚀 <b>Угода відкрита:</b> {symbol}\n"
@@ -951,7 +1026,7 @@ def execute_scalping_trade(target, balance, position_side, behavior_summary, man
             decision_summary = {
                 "score": float(score),
                 "source": ("watchlist" if isinstance(behavior_summary, dict) and str(behavior_summary.get("entry_reason", "")).startswith("WATCHLIST") else "finbest"),
-                "note": "No TradeScore; amount derived from decision score/default",
+                "note": "No TradeScore; amount derived from allocator/manual",
             }
 
             # ====================== SMART AVERAGING (DCA) INIT ======================
@@ -1006,7 +1081,7 @@ def execute_scalping_trade(target, balance, position_side, behavior_summary, man
                     "tp_from_avg_pct": tp_from_avg_pct,
                     "alt_tp_from_avg_pct": alt_tp_from_avg_pct,
                     "tp_price": tp_price,
-                    "tp_order_id": None,  # біржовий TP не ставимо (bot-only)
+                    "tp_order_id": None,
                     "total_margin_used": total_margin_used,
                     "total_qty": total_qty,
                     "max_margin_per_trade": max_margin_per_trade,
@@ -1057,7 +1132,7 @@ def manage_open_trade(symbol, entry_price, side, amount, leverage, behavior_summ
 
     # ===== Конфіг =====
     try:
-        from config import SMART_AVG, TP_EPSILON,USE_EXCHANGE_TP
+        from config import SMART_AVG, TP_EPSILON, USE_EXCHANGE_TP
     except Exception:
         SMART_AVG = {}
         TP_EPSILON = 0.0007
@@ -1125,6 +1200,8 @@ def manage_open_trade(symbol, entry_price, side, amount, leverage, behavior_summ
     MIN_SECONDS_BETWEEN_ADDS = int(SMART_AVG.get("min_seconds_between_adds", 45))
     _last_add_ts = 0.0
 
+    # --- захист від API-помилок, щоб не робити Manual Close по глюку ---
+    _api_fail_streak = 0
 
     peak_pnl_percent = -9999.0
     worst_pnl_percent =  9999.0
@@ -1177,7 +1254,7 @@ def manage_open_trade(symbol, entry_price, side, amount, leverage, behavior_summ
             position_side=side,
             leverage=leverage,
             amount_to_use=0.0,          # ← обов’язково
-            bypass_price_check=True 
+            bypass_price_check=True
         )
         closed_ok = False
         try:
@@ -1269,10 +1346,27 @@ def manage_open_trade(symbol, entry_price, side, amount, leverage, behavior_summ
         while True:
             current_price = Decimal(str(get_current_futures_price(symbol_clean)))
 
-            # якщо позиція зникла на біржі → фіналізація
-            if not check_position_with_retry(symbol_clean, side, retries=3, delay=2):
-                log_message(f"⚠️ Позиція {symbol_clean} закрита вручну на біржі → завершую моніторинг")
-                finalize_trade("Manual Close", current_price)
+            # 🌐 Перевірка позиції з толерантністю до API-помилок
+            exists = None
+            try:
+                exists = check_position_with_retry(symbol_clean, side, retries=3, delay=2)
+            except Exception as _chk_err:
+                exists = None
+                log_error(f"[DCA] check_position error for {symbol_clean}: {type(_chk_err).__name__}: {_chk_err}")
+
+            # Якщо стан невідомий (API впав) — НЕ закривати, просто пауза і далі
+            if exists is None:
+                _api_fail_streak += 1
+                if _api_fail_streak >= 3:
+                    log_message(f"⏸ [DCA] API unstable (streak={_api_fail_streak}) → пауза без дій")
+                time.sleep(max(3, check_interval))
+                continue
+            else:
+                _api_fail_streak = 0
+
+            # Якщо точно немає відкритої позиції → вихід без форс-закриття/Manual Close
+            if exists is False:
+                log_message(f"ℹ️ [DCA] Позиція {symbol_clean} відсутня (0 qty) → вихід з моніторингу без закриття.")
                 break
 
             # PnL від середньої
@@ -1482,39 +1576,6 @@ def adjust_risk_by_volatility(symbol, base_leverage=50):
         log_error(f"❌ Помилка у adjust_risk_by_volatility для {symbol}: {e}")
         return base_leverage
 
-
-def load_active_trades():
-    """
-    📥 Повертає dict активних угод із ActiveTrades.json (ключ = trade_id).
-    """
-    try:
-        data = _at_safe_load()  # потокобезпечне читання з utils.logger
-        if isinstance(data, dict):
-            return data
-        elif isinstance(data, list):
-            # Рідкісний кейс: якщо раптом список — конвертуємо
-            return {t.get("trade_id", f"trade_{i}"): t for i, t in enumerate(data) if isinstance(t, dict)}
-        return {}
-    except Exception as e:
-        log_error(f"❌ load_active_trades: помилка завантаження → {e}")
-        return {}
-
-
-def resolve_trade_id(symbol: str, side: str) -> str | None:
-    """
-    Підхоплює наш локальний trade_id (той самий, що записали у signal_stats/ActiveTrades)
-    для пари symbol+side. Якщо не знайдено — повертає None.
-    """
-    try:
-        local_active = load_active_trades()  # очікуємо dict {trade_id: rec}
-        if isinstance(local_active, dict):
-            side_u = (side or "").upper()
-            for tid, rec in local_active.items():
-                if rec.get("symbol") == symbol and str(rec.get("side", "")).upper() == side_u:
-                    return tid
-    except Exception as e:
-        log_error(f"resolve_trade_id: {e}")
-    return None
 
 
 def monitor_all_open_trades():

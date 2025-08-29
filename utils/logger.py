@@ -1,6 +1,6 @@
 import os
 from datetime import datetime
-
+import time
 import json
 import os
 import copy
@@ -10,6 +10,7 @@ from config import bybit
 from config import ACTIVE_TRADES_FILE,MAX_ACTIVE_TRADES
 import tempfile
 from threading import Lock
+
 
 
 SIDE_BUY = "Buy"
@@ -335,21 +336,7 @@ def log_candidate_simple(symbol, score):
 _AT_LOCK = Lock()  # глобальний лок на ActiveTrades
 # використовуємо існуючий ACTIVE_TRADES_FILE з config
 
-def _at_safe_load() -> dict:
-    """Потокобезпечне читання ActiveTrades.json. Завжди повертає dict{trade_id: rec}."""
-    if not os.path.exists(ACTIVE_TRADES_FILE):
-        return {}
-    try:
-        with open(ACTIVE_TRADES_FILE, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        if isinstance(data, dict):
-            return data
-        elif isinstance(data, list):
-            # страхувальний ап: конвертація зі списку у dict
-            return {t.get("trade_id", f"trade_{i}"): t for i, t in enumerate(data) if isinstance(t, dict)}
-        return {}
-    except Exception:
-        return {}
+
 
 def _at_atomic_save(data: dict) -> None:
     """Атомарний запис ActiveTrades.json через tempfile + os.replace."""
@@ -415,14 +402,6 @@ def prune_inactive_trades(live_ids: set[str]) -> None:
             _at_atomic_save(trades)
             log_message("🧹 ActiveTrades прунінг виконано")
 
-def get_active_trades() -> dict:
-    """
-    Повертає dict{trade_id: rec} з ActiveTrades.json.
-    (Без автосинху з біржі — за це відповідає monitor_all_open_trades.)
-    """
-    with _AT_LOCK:
-        return _at_safe_load()
-
 
 def reconcile_active_trades_with_exchange():
     """
@@ -474,3 +453,149 @@ def reconcile_active_trades_with_exchange():
 
     except Exception as e:
         log_error(f"reconcile_active_trades_with_exchange: {e}")
+
+def load_active_trades():
+    """
+    📥 Повертає dict активних угод із ActiveTrades.json (ключ = trade_id).
+    """
+    try:
+        data = _at_safe_load()  # потокобезпечне читання з utils.logger
+        if isinstance(data, dict):
+            return data
+        elif isinstance(data, list):
+            # Рідкісний кейс: якщо раптом список — конвертуємо
+            return {t.get("trade_id", f"trade_{i}"): t for i, t in enumerate(data) if isinstance(t, dict)}
+        return {}
+    except Exception as e:
+        log_error(f"❌ load_active_trades: помилка завантаження → {e}")
+        return {}
+
+# ---- OpenTrades helpers (рахуємо лише незакриті) ----------------------------
+def get_open_trades_count() -> int:
+    try:
+        trades = load_active_trades() or {}
+        if isinstance(trades, dict):
+            return sum(1 for t in trades.values() if not t.get("closed"))
+        elif isinstance(trades, list):
+            return sum(1 for t in trades if isinstance(t, dict) and not t.get("closed"))
+    except Exception as e:
+        log_error(f"[get_open_trades_count] {e}")
+    return 0
+
+def has_open_trade_for(symbol: str) -> bool:
+    try:
+        trades = load_active_trades() or {}
+        if isinstance(trades, dict):
+            for rec in trades.values():
+                if rec.get("symbol") == symbol and not rec.get("closed"):
+                    return True
+        elif isinstance(trades, list):
+            for rec in trades:
+                if isinstance(rec, dict) and rec.get("symbol") == symbol and not rec.get("closed"):
+                    return True
+    except Exception as e:
+        log_error(f"[has_open_trade_for] {e}")
+    return False
+
+
+def resolve_trade_id(symbol: str, side: str) -> str | None:
+    """
+    Підхоплює наш локальний trade_id (той самий, що записали у signal_stats/ActiveTrades)
+    для пари symbol+side. Якщо не знайдено — повертає None.
+    """
+    try:
+        local_active = load_active_trades()  # очікуємо dict {trade_id: rec}
+        if isinstance(local_active, dict):
+            side_u = (side or "").upper()
+            for tid, rec in local_active.items():
+                if rec.get("symbol") == symbol and str(rec.get("side", "")).upper() == side_u:
+                    return tid
+    except Exception as e:
+        log_error(f"resolve_trade_id: {e}")
+    return None
+
+# ----- Активні угоди (мапа як було) -----
+def get_active_trades() -> dict:
+    """
+    Повертає dict{trade_id: rec} з ActiveTrades.json.
+    (Без автосинху з біржі — за це відповідає monitor_all_open_trades.)
+    """
+    with _AT_LOCK:
+        return _at_safe_load() or {}
+    
+
+def is_position_open_live(symbol, side):
+  
+    """
+    📡 Перевіряє чи позиція ще відкрита:
+    ✅ Спочатку в ActiveTradesFile
+    ✅ Потім на біржі (гарантія)
+    """
+    try:
+        
+        
+        # 🗂️ Перевірка локального ActiveTradesFile
+        active_trades = get_active_trades()
+
+        # 🔎 Якщо це dict — стара логіка
+        if isinstance(active_trades, dict):
+            trade = active_trades.get(symbol)
+            if trade and trade.get("status") == "open":
+                log_message(f"✅ is_position_open_live: знайдено {symbol} локально")
+                return True
+
+        # 🔎 Якщо це список — шукаємо по списку
+        elif isinstance(active_trades, list):
+            for trade in active_trades:
+                if not isinstance(trade, dict):
+                    log_error(f"❌ [is_position_open_live] Очікував dict, отримав: {trade}")
+                    continue
+                if trade.get("symbol") == symbol and not trade.get("closed", True):
+                    log_message(f"✅ is_position_open_live: знайдено {symbol} локально (список)")
+                    return True
+
+        # 📡 Перевірка на біржі
+        response = bybit.get_positions(category="linear", symbol=symbol.split("_")[0])
+        positions = response.get("result", {}).get("list", [])
+        for pos in positions:
+            size = float(pos.get("size", 0))
+            if size > 0:
+                pos_side = pos.get("side", "").upper()
+                if (side.upper() == "LONG" and pos_side == "BUY") or \
+                   (side.upper() == "SHORT" and pos_side == "SELL"):
+                    log_message(f"✅ is_position_open_live: знайдено {symbol} на біржі")
+                    return True
+
+        return False
+
+    except Exception as e:
+        log_error(f"❌ [is_position_open_live] Помилка для {symbol}: {e}")
+        return False
+
+def check_position_with_retry(symbol, side, retries=3, delay=2):
+    """
+    🔄 Перевіряє чи позиція відкрита з повторними спробами, щоб уникнути false positives.
+    """
+    for attempt in range(1, retries + 1):
+        if is_position_open_live(symbol, side):
+            log_message(f"✅ Позиція {symbol} знайдена на біржі (спроба {attempt})")
+            return True
+        time.sleep(delay)
+    log_message(f"❌ {symbol} позиція не знайдена після {retries} спроб")
+    return False
+
+def _at_safe_load() -> dict:
+    """Потокобезпечне читання ActiveTrades.json. Завжди повертає dict{trade_id: rec}."""
+    if not os.path.exists(ACTIVE_TRADES_FILE):
+        return {}
+    try:
+        with open(ACTIVE_TRADES_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        if isinstance(data, dict):
+            return data
+        elif isinstance(data, list):
+            # страхувальний ап: конвертація зі списку у dict
+            return {t.get("trade_id", f"trade_{i}"): t for i, t in enumerate(data) if isinstance(t, dict)}
+        return {}
+    except Exception:
+        return {}

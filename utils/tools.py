@@ -1,4 +1,4 @@
-from utils.logger import log_message, log_error,get_active_trades
+from utils.logger import log_message, log_error
 
 import json
 import os
@@ -9,25 +9,50 @@ from config import EXCHANGE, client
 from config import ACTIVE_TRADES_FILE
 from datetime import datetime, timedelta
 from config import bybit
-
-# Для універсальної підтримки
+from utils.logger import load_active_trades
 
 
 # -------------------- BALANCE --------------------
 
+# ----- Баланс -----
 def get_balance():
-    """💰 Отримує баланс USDT для ф’ючерсного акаунта"""
+    """💰 Отримує доступний USDT баланс для ф’ючерсного акаунта (Binance/Bybit Unified)."""
     try:
         if EXCHANGE == "binance":
-            balance_info = client.futures_account_balance()
-            usdt_balance = next(item for item in balance_info if item["asset"] == "USDT")["balance"]
-            return float(usdt_balance)
+            balance_info = client.futures_account_balance()  # list of dicts
+            # шукаємо USDT; беремо withdrawAvailable якщо є, інакше balance
+            for item in balance_info:
+                if item.get("asset") == "USDT":
+                    # Binance futures повертає 'withdrawAvailable' і 'balance'
+                    val = item.get("withdrawAvailable")
+                    if val in (None, "", "0", 0):  # fallback
+                        val = item.get("balance", 0)
+                    return float(val or 0.0)
+            return 0.0
 
         elif EXCHANGE == "bybit":
-            response = client.get_wallet_balance(accountType="UNIFIED")
-            usdt_info = response["result"]["list"][0]["coin"]
-            usdt_balance = usdt_info["USDT"]["availableToTrade"]
-            return float(usdt_balance)
+            # Unified account
+            resp = client.get_wallet_balance(accountType="UNIFIED")
+            if resp.get("retCode") != 0:
+                log_error(f"get_balance() → bad resp: {resp.get('retMsg')}")
+                return 0.0
+            lists = (resp.get("result", {}) or {}).get("list", []) or []
+            if not lists:
+                return 0.0
+            coins = lists[0].get("coin", []) or []
+            for c in coins:
+                if c.get("coin") == "USDT":
+                    # пріоритет: availableToTrade → availableToWithdraw → availableBalance → equity
+                    val = (c.get("availableToTrade") or
+                           c.get("availableToWithdraw") or
+                           c.get("availableBalance") or
+                           c.get("equity") or 0)
+                    return float(val or 0.0)
+            return 0.0
+
+        else:
+            log_error(f"get_balance() → unknown EXCHANGE='{EXCHANGE}'")
+            return 0.0
 
     except Exception as e:
         log_error(f"get_balance() → {e}")
@@ -408,14 +433,35 @@ def make_json_safe(obj):
     else:
         return str(obj)
 
+def get_active_trade(trade_id: str):
+    """
+    Повертає один трейд з load_active_trades() (який у тебе вже є).
+    """
+    try:
+        trades = load_active_trades() or {}
+        if isinstance(trades, dict):
+            return trades.get(trade_id)
+        elif isinstance(trades, list):
+            for t in trades:
+                if isinstance(t, dict) and t.get("trade_id") == trade_id:
+                    return t
+    except Exception as e:
+        log_error(f"[compat] get_active_trade error: {e}")
+    return None
+
+
+
 
 def is_position_open_live(symbol, side):
+  
     """
     📡 Перевіряє чи позиція ще відкрита:
     ✅ Спочатку в ActiveTradesFile
     ✅ Потім на біржі (гарантія)
     """
     try:
+        from utils.logger import get_active_trades
+        
         # 🗂️ Перевірка локального ActiveTradesFile
         active_trades = get_active_trades()
 
@@ -519,3 +565,21 @@ def check_position_with_retry(symbol, side, retries=3, delay=2):
         time.sleep(delay)
     log_message(f"❌ {symbol} позиція не знайдена після {retries} спроб")
     return False
+
+
+
+def _at_safe_load() -> dict:
+    """Потокобезпечне читання ActiveTrades.json. Завжди повертає dict{trade_id: rec}."""
+    if not os.path.exists(ACTIVE_TRADES_FILE):
+        return {}
+    try:
+        with open(ACTIVE_TRADES_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        if isinstance(data, dict):
+            return data
+        elif isinstance(data, list):
+            # страхувальний ап: конвертація зі списку у dict
+            return {t.get("trade_id", f"trade_{i}"): t for i, t in enumerate(data) if isinstance(t, dict)}
+        return {}
+    except Exception:
+        return {}

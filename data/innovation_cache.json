@@ -1,0 +1,2002 @@
+{
+  "1000000BABYDOGEUSDT": {
+    "innovation": false,
+    "listing_ts": 1718105652000
+  },
+  "1000000CHEEMSUSDT": {
+    "innovation": false,
+    "listing_ts": 1732531212000
+  },
+  "1000000MOGUSDT": {
+    "innovation": false,
+    "listing_ts": 1715874213000
+  },
+  "1000000PEIPEIUSDT": {
+    "innovation": false,
+    "listing_ts": 1720088189000
+  },
+  "10000COQUSDT": {
+    "innovation": false,
+    "listing_ts": 1710233332000
+  },
+  "10000ELONUSDT": {
+    "innovation": false,
+    "listing_ts": 1739179416000
+  },
+  "10000LADYSUSDT": {
+    "innovation": false,
+    "listing_ts": 1683802102000
+  },
+  "10000QUBICUSDT": {
+    "innovation": false,
+    "listing_ts": 1735034038000
+  },
+  "10000SATSUSDT": {
+    "innovation": false,
+    "listing_ts": 1700127695000
+  },
+  "10000WENUSDT": {
+    "innovation": false,
+    "listing_ts": 1706689209000
+  },
+  "1000BONKPERP": {
+    "innovation": false,
+    "listing_ts": 1732783376000
+  },
+  "1000BONKUSDT": {
+    "innovation": false,
+    "listing_ts": 1672971039000
+  },
+  "1000BTTUSDT": {
+    "innovation": false,
+    "listing_ts": 1645769298000
+  },
+  "1000CATUSDT": {
+    "innovation": false,
+    "listing_ts": 1726140905000
+  },
+  "1000FLOKIUSDT": {
+    "innovation": false,
+    "listing_ts": 1677228986000
+  },
+  "1000LUNCUSDT": {
+    "innovation": false,
+    "listing_ts": 1662681601000
+  },
+  "1000NEIROCTOPERP": {
+    "innovation": false,
+    "listing_ts": 1753946240000
+  },
+  "1000NEIROCTOUSDT": {
+    "innovation": false,
+    "listing_ts": 1726480024000
+  },
+  "1000PEPEPERP": {
+    "innovation": false,
+    "listing_ts": 1713960905000
+  },
+  "1000PEPEUSDT": {
+    "innovation": false,
+    "listing_ts": 1683108271000
+  },
+  "1000RATSUSDT": {
+    "innovation": false,
+    "listing_ts": 1700633654000
+  },
+  "1000TAGUSDT": {
+    "innovation": false,
+    "listing_ts": 1753691858000
+  },
+  "1000TOSHIUSDT": {
+    "innovation": false,
+    "listing_ts": 1733390562000
+  },
+  "1000TURBOUSDT": {
+    "innovation": false,
+    "listing_ts": 1709205139000
+  },
+  "1000XECUSDT": {
+    "innovation": false,
+    "listing_ts": 1649820036000
+  },
+  "1000XUSDT": {
+    "innovation": false,
+    "listing_ts": 1729841874000
+  },
+  "1INCHUSDT": {
+    "innovation": false,
+    "listing_ts": 1638748800000
+  },
+  "A2ZUSDT": {
+    "innovation": false,
+    "listing_ts": 1753952943000
+  },
+  "A8USDT": {
+    "innovation": false,
+    "listing_ts": 1721641953000
+  },
+  "AAVEPERP": {
+    "innovation": false,
+    "listing_ts": 1746003578000
+  },
+  "AAVEUSDT": {
+    "innovation": false,
+    "listing_ts": 1620897660000
+  },
+  "ACEUSDT": {
+    "innovation": false,
+    "listing_ts": 1702882175000
+  },
+  "ACHUSDT": {
+    "innovation": false,
+    "listing_ts": 1649405257000
+  },
+  "ACTUSDT": {
+    "innovation": false,
+    "listing_ts": 1731312852000
+  },
+  "ACXUSDT": {
+    "innovation": false,
+    "listing_ts": 1733478941000
+  },
+  "ADAUSDT": {
+    "innovation": false,
+    "listing_ts": 1610668800000
+  },
+  "AERGOUSDT": {
+    "innovation": false,
+    "listing_ts": 1700129246000
+  },
+  "AEROUSDT": {
+    "innovation": false,
+    "listing_ts": 1721034308000
+  },
+  "AEVOPERP": {
+    "innovation": false,
+    "listing_ts": 1715157823000
+  },
+  "AEVOUSDT": {
+    "innovation": false,
+    "listing_ts": 1710327014000
+  },
+  "AGIUSDT": {
+    "innovation": false,
+    "listing_ts": 1700209664000
+  },
+  "AGLDUSDT": {
+    "innovation": false,
+    "listing_ts": 1650608721000
+  },
+  "AGTUSDT": {
+    "innovation": false,
+    "listing_ts": 1748411235000
+  },
+  "AI16ZPERP": {
+    "innovation": false,
+    "listing_ts": 1753942761000
+  },
+  "AI16ZUSDT": {
+    "innovation": false,
+    "listing_ts": 1735546658000
+  },
+  "AINUSDT": {
+    "innovation": false,
+    "listing_ts": 1752145090000
+  },
+  "AIOUSDT": {
+    "innovation": false,
+    "listing_ts": 1755090699000
+  },
+  "AIOZUSDT": {
+    "innovation": false,
+    "listing_ts": 1718266561000
+  },
+  "AIUSDT": {
+    "innovation": false,
+    "listing_ts": 1705405869000
+  },
+  "AIXBTUSDT": {
+    "innovation": false,
+    "listing_ts": 1734683907000
+  },
+  "AKTUSDT": {
+    "innovation": false,
+    "listing_ts": 1719392170000
+  },
+  "ALCHUSDT": {
+    "innovation": false,
+    "listing_ts": 1736235131000
+  },
+  "ALEOUSDT": {
+    "innovation": false,
+    "listing_ts": 1726735815000
+  },
+  "ALGOUSDT": {
+    "innovation": false,
+    "listing_ts": 1632355200000
+  },
+  "ALICEUSDT": {
+    "innovation": false,
+    "listing_ts": 1635120000000
+  },
+  "ALPHAUSDT": {
+    "innovation": false,
+    "listing_ts": 1648626100000
+  },
+  "ALPINEUSDT": {
+    "innovation": false,
+    "listing_ts": 1755164723000
+  },
+  "ALTUSDT": {
+    "innovation": false,
+    "listing_ts": 1706181459000
+  },
+  "ALUUSDT": {
+    "innovation": false,
+    "listing_ts": 1736841722000
+  },
+  "ANIMEUSDT": {
+    "innovation": false,
+    "listing_ts": 1737642024000
+  },
+  "ANKRUSDT": {
+    "innovation": false,
+    "listing_ts": 1637712000000
+  },
+  "APEUSDT": {
+    "innovation": false,
+    "listing_ts": 1647571477000
+  },
+  "API3USDT": {
+    "innovation": false,
+    "listing_ts": 1646019009000
+  },
+  "APTUSDT": {
+    "innovation": false,
+    "listing_ts": 1666107272000
+  },
+  "ARBPERP": {
+    "innovation": false,
+    "listing_ts": 1713790947000
+  },
+  "ARBUSDT": {
+    "innovation": false,
+    "listing_ts": 1679563660000
+  },
+  "ARCUSDT": {
+    "innovation": false,
+    "listing_ts": 1735892178000
+  },
+  "ARIAUSDT": {
+    "innovation": false,
+    "listing_ts": 1756903625000
+  },
+  "ARKMUSDT": {
+    "innovation": false,
+    "listing_ts": 1690508471000
+  },
+  "ARKUSDT": {
+    "innovation": false,
+    "listing_ts": 1690869317000
+  },
+  "ARPAUSDT": {
+    "innovation": false,
+    "listing_ts": 1650369703000
+  },
+  "ARUSDT": {
+    "innovation": false,
+    "listing_ts": 1639978762000
+  },
+  "ASPUSDT": {
+    "innovation": false,
+    "listing_ts": 1753359185000
+  },
+  "ASRUSDT": {
+    "innovation": false,
+    "listing_ts": 1755163098000
+  },
+  "ASTRUSDT": {
+    "innovation": false,
+    "listing_ts": 1649044122000
+  },
+  "ATAUSDT": {
+    "innovation": false,
+    "listing_ts": 1691483941000
+  },
+  "ATHUSDT": {
+    "innovation": false,
+    "listing_ts": 1718269304000
+  },
+  "ATOMUSDT": {
+    "innovation": false,
+    "listing_ts": 1633910400000
+  },
+  "AUCTIONUSDT": {
+    "innovation": false,
+    "listing_ts": 1690526070000
+  },
+  "AUDIOUSDT": {
+    "innovation": false,
+    "listing_ts": 1637884800000
+  },
+  "AUSDT": {
+    "innovation": false,
+    "listing_ts": 1748420402000
+  },
+  "AVAAIUSDT": {
+    "innovation": false,
+    "listing_ts": 1736325126000
+  },
+  "AVAILUSDT": {
+    "innovation": false,
+    "listing_ts": 1721745394000
+  },
+  "AVAUSDT": {
+    "innovation": false,
+    "listing_ts": 1734343893000
+  },
+  "AVAXUSDT": {
+    "innovation": false,
+    "listing_ts": 1631664000000
+  },
+  "AVLUSDT": {
+    "innovation": false,
+    "listing_ts": 1740048791000
+  },
+  "AWEUSDT": {
+    "innovation": false,
+    "listing_ts": 1747904988000
+  },
+  "AXLUSDT": {
+    "innovation": false,
+    "listing_ts": 1701941550000
+  },
+  "AXSUSDT": {
+    "innovation": false,
+    "listing_ts": 1628726400000
+  },
+  "B2USDT": {
+    "innovation": false,
+    "listing_ts": 1749460723000
+  },
+  "B3USDT": {
+    "innovation": false,
+    "listing_ts": 1739355381000
+  },
+  "BABYUSDT": {
+    "innovation": false,
+    "listing_ts": 1743672875000
+  },
+  "BADGERUSDT": {
+    "innovation": false,
+    "listing_ts": 1692174718000
+  },
+  "BAKEUSDT": {
+    "innovation": false,
+    "listing_ts": 1648794979000
+  },
+  "BANANAS31USDT": {
+    "innovation": false,
+    "listing_ts": 1743154150000
+  },
+  "BANANAUSDT": {
+    "innovation": false,
+    "listing_ts": 1721386183000
+  },
+  "BANDUSDT": {
+    "innovation": false,
+    "listing_ts": 1645167116000
+  },
+  "BANKUSDT": {
+    "innovation": false,
+    "listing_ts": 1746694311000
+  },
+  "BANUSDT": {
+    "innovation": false,
+    "listing_ts": 1731919190000
+  },
+  "BATUSDT": {
+    "innovation": false,
+    "listing_ts": 1637712000000
+  },
+  "BBUSDT": {
+    "innovation": false,
+    "listing_ts": 1715686860000
+  },
+  "BCHPERP": {
+    "innovation": false,
+    "listing_ts": 1746013033000
+  },
+  "BCHUSDT": {
+    "innovation": false,
+    "listing_ts": 1514764800000
+  },
+  "BDXNUSDT": {
+    "innovation": false,
+    "listing_ts": 1748946949000
+  },
+  "BEAMUSDT": {
+    "innovation": false,
+    "listing_ts": 1699955296000
+  },
+  "BELUSDT": {
+    "innovation": false,
+    "listing_ts": 1655445585000
+  },
+  "BERAUSDT": {
+    "innovation": false,
+    "listing_ts": 1738847788000
+  },
+  "BICOUSDT": {
+    "innovation": false,
+    "listing_ts": 1638445217000
+  },
+  "BIGTIMEUSDT": {
+    "innovation": false,
+    "listing_ts": 1697099745000
+  },
+  "BIOUSDT": {
+    "innovation": false,
+    "listing_ts": 1735034094000
+  },
+  "BLASTUSDT": {
+    "innovation": false,
+    "listing_ts": 1719480310000
+  },
+  "BLURUSDT": {
+    "innovation": false,
+    "listing_ts": 1676428387000
+  },
+  "BMTUSDT": {
+    "innovation": false,
+    "listing_ts": 1741852724000
+  },
+  "BNBPERP": {
+    "innovation": false,
+    "listing_ts": 1664459242000
+  },
+  "BNBUSDT": {
+    "innovation": false,
+    "listing_ts": 1624951080000
+  },
+  "BNTUSDT": {
+    "innovation": false,
+    "listing_ts": 1691385533000
+  },
+  "BOBAUSDT": {
+    "innovation": false,
+    "listing_ts": 1649231761000
+  },
+  "BOMEUSDT": {
+    "innovation": false,
+    "listing_ts": 1710492745000
+  },
+  "BRETTUSDT": {
+    "innovation": false,
+    "listing_ts": 1714119444000
+  },
+  "BROCCOLIUSDT": {
+    "innovation": false,
+    "listing_ts": 1739535111000
+  },
+  "BRUSDT": {
+    "innovation": false,
+    "listing_ts": 1742476788000
+  },
+  "BSUUSDT": {
+    "innovation": false,
+    "listing_ts": 1756290653000
+  },
+  "BSVUSDT": {
+    "innovation": false,
+    "listing_ts": 1639105708000
+  },
+  "BSWUSDT": {
+    "innovation": false,
+    "listing_ts": 1648017126000
+  },
+  "BTC-26DEC25": {
+    "innovation": false,
+    "listing_ts": 1736496000000
+  },
+  "BTC-26SEP25": {
+    "innovation": false,
+    "listing_ts": 1728028800000
+  },
+  "BTCPERP": {
+    "innovation": false,
+    "listing_ts": 1610604231000
+  },
+  "BTCUSDT": {
+    "innovation": false,
+    "listing_ts": 1584230400000
+  },
+  "BTCUSDT-12SEP25": {
+    "innovation": false,
+    "listing_ts": 1755849600000
+  },
+  "BTCUSDT-19SEP25": {
+    "innovation": false,
+    "listing_ts": 1756454400000
+  },
+  "BTCUSDT-26DEC25": {
+    "innovation": false,
+    "listing_ts": 1743483600000
+  },
+  "BTCUSDT-26JUN26": {
+    "innovation": false,
+    "listing_ts": 1751616000000
+  },
+  "BTCUSDT-26SEP25": {
+    "innovation": false,
+    "listing_ts": 1743483600000
+  },
+  "BTCUSDT-27MAR26": {
+    "innovation": false,
+    "listing_ts": 1743753600000
+  },
+  "BTCUSDT-28NOV25": {
+    "innovation": false,
+    "listing_ts": 1757059200000
+  },
+  "BTCUSDT-31OCT25": {
+    "innovation": false,
+    "listing_ts": 1754640000000
+  },
+  "BTRUSDT": {
+    "innovation": false,
+    "listing_ts": 1756293116000
+  },
+  "BUSDT": {
+    "innovation": false,
+    "listing_ts": 1747980646000
+  },
+  "C98USDT": {
+    "innovation": false,
+    "listing_ts": 1635120000000
+  },
+  "CAKEUSDT": {
+    "innovation": false,
+    "listing_ts": 1699005636000
+  },
+  "CAMPUSDT": {
+    "innovation": false,
+    "listing_ts": 1756369902000
+  },
+  "CARVUSDT": {
+    "innovation": false,
+    "listing_ts": 1729068075000
+  },
+  "CATIUSDT": {
+    "innovation": false,
+    "listing_ts": 1725869712000
+  },
+  "CELOUSDT": {
+    "innovation": false,
+    "listing_ts": 1641367582000
+  },
+  "CELRUSDT": {
+    "innovation": false,
+    "listing_ts": 1635120000000
+  },
+  "CETUSUSDT": {
+    "innovation": false,
+    "listing_ts": 1707104643000
+  },
+  "CFXUSDT": {
+    "innovation": false,
+    "listing_ts": 1676883925000
+  },
+  "CGPTUSDT": {
+    "innovation": false,
+    "listing_ts": 1736506047000
+  },
+  "CHESSUSDT": {
+    "innovation": false,
+    "listing_ts": 1725265715000
+  },
+  "CHILLGUYUSDT": {
+    "innovation": false,
+    "listing_ts": 1732181897000
+  },
+  "CHRUSDT": {
+    "innovation": false,
+    "listing_ts": 1637193600000
+  },
+  "CHZUSDT": {
+    "innovation": false,
+    "listing_ts": 1633996800000
+  },
+  "CKBUSDT": {
+    "innovation": false,
+    "listing_ts": 1644901148000
+  },
+  "CLANKERUSDT": {
+    "innovation": false,
+    "listing_ts": 1745835370000
+  },
+  "CLOUDUSDT": {
+    "innovation": false,
+    "listing_ts": 1721381288000
+  },
+  "COMPUSDT": {
+    "innovation": false,
+    "listing_ts": 1628726400000
+  },
+  "COOKIEUSDT": {
+    "innovation": false,
+    "listing_ts": 1736235179000
+  },
+  "COOKUSDT": {
+    "innovation": false,
+    "listing_ts": 1733125644000
+  },
+  "COREUSDT": {
+    "innovation": false,
+    "listing_ts": 1675927514000
+  },
+  "COSUSDT": {
+    "innovation": false,
+    "listing_ts": 1715245263000
+  },
+  "COTIUSDT": {
+    "innovation": false,
+    "listing_ts": 1638445117000
+  },
+  "COWUSDT": {
+    "innovation": false,
+    "listing_ts": 1731060401000
+  },
+  "CPOOLUSDT": {
+    "innovation": false,
+    "listing_ts": 1741248211000
+  },
+  "CROSSUSDT": {
+    "innovation": false,
+    "listing_ts": 1752145300000
+  },
+  "CROUSDT": {
+    "innovation": false,
+    "listing_ts": 1637625600000
+  },
+  "CRVPERP": {
+    "innovation": false,
+    "listing_ts": 1746010299000
+  },
+  "CRVUSDT": {
+    "innovation": false,
+    "listing_ts": 1635120000000
+  },
+  "CTCUSDT": {
+    "innovation": false,
+    "listing_ts": 1652774270000
+  },
+  "CTKUSDT": {
+    "innovation": false,
+    "listing_ts": 1638444847000
+  },
+  "CTSIUSDT": {
+    "innovation": false,
+    "listing_ts": 1648018511000
+  },
+  "CUDISUSDT": {
+    "innovation": false,
+    "listing_ts": 1749717315000
+  },
+  "CUSDT": {
+    "innovation": false,
+    "listing_ts": 1752574968000
+  },
+  "CVCUSDT": {
+    "innovation": false,
+    "listing_ts": 1638285651000
+  },
+  "CVXUSDT": {
+    "innovation": false,
+    "listing_ts": 1650440282000
+  },
+  "CYBERUSDT": {
+    "innovation": false,
+    "listing_ts": 1692124015000
+  },
+  "DAMUSDT": {
+    "innovation": false,
+    "listing_ts": 1755521321000
+  },
+  "DASHUSDT": {
+    "innovation": false,
+    "listing_ts": 1633996800000
+  },
+  "DBRUSDT": {
+    "innovation": false,
+    "listing_ts": 1729161730000
+  },
+  "DEEPUSDT": {
+    "innovation": false,
+    "listing_ts": 1729165754000
+  },
+  "DEGENUSDT": {
+    "innovation": false,
+    "listing_ts": 1711971483000
+  },
+  "DENTUSDT": {
+    "innovation": false,
+    "listing_ts": 1642068928000
+  },
+  "DEXEUSDT": {
+    "innovation": false,
+    "listing_ts": 1721898539000
+  },
+  "DGBUSDT": {
+    "innovation": false,
+    "listing_ts": 1648452331000
+  },
+  "DIAUSDT": {
+    "innovation": false,
+    "listing_ts": 1753256933000
+  },
+  "DMCUSDT": {
+    "innovation": false,
+    "listing_ts": 1751539595000
+  },
+  "DODOUSDT": {
+    "innovation": false,
+    "listing_ts": 1650457800000
+  },
+  "DOGEPERP": {
+    "innovation": false,
+    "listing_ts": 1713793607000
+  },
+  "DOGEUSDT": {
+    "innovation": false,
+    "listing_ts": 1622630640000
+  },
+  "DOGSUSDT": {
+    "innovation": false,
+    "listing_ts": 1724674595000
+  },
+  "DOGUSDT": {
+    "innovation": false,
+    "listing_ts": 1717495120000
+  },
+  "DOLOUSDT": {
+    "innovation": false,
+    "listing_ts": 1753692850000
+  },
+  "DOODUSDT": {
+    "innovation": false,
+    "listing_ts": 1746796833000
+  },
+  "DOTPERP": {
+    "innovation": false,
+    "listing_ts": 1732785865000
+  },
+  "DOTUSDT": {
+    "innovation": false,
+    "listing_ts": 1616060040000
+  },
+  "DRIFTUSDT": {
+    "innovation": false,
+    "listing_ts": 1716283968000
+  },
+  "DUCKUSDT": {
+    "innovation": false,
+    "listing_ts": 1737022888000
+  },
+  "DUSKUSDT": {
+    "innovation": false,
+    "listing_ts": 1639673130000
+  },
+  "DYDXUSDT": {
+    "innovation": false,
+    "listing_ts": 1633910400000
+  },
+  "DYMUSDT": {
+    "innovation": false,
+    "listing_ts": 1707273410000
+  },
+  "EDUUSDT": {
+    "innovation": false,
+    "listing_ts": 1683273334000
+  },
+  "EGLDUSDT": {
+    "innovation": false,
+    "listing_ts": 1637596800000
+  },
+  "EIGENUSDT": {
+    "innovation": false,
+    "listing_ts": 1722915813000
+  },
+  "ELXUSDT": {
+    "innovation": false,
+    "listing_ts": 1741763140000
+  },
+  "ENAPERP": {
+    "innovation": false,
+    "listing_ts": 1732788206000
+  },
+  "ENAUSDT": {
+    "innovation": false,
+    "listing_ts": 1712050966000
+  },
+  "ENJUSDT": {
+    "innovation": false,
+    "listing_ts": 1635696000000
+  },
+  "ENSUSDT": {
+    "innovation": false,
+    "listing_ts": 1636675200000
+  },
+  "EPICUSDT": {
+    "innovation": false,
+    "listing_ts": 1741940281000
+  },
+  "EPTUSDT": {
+    "innovation": false,
+    "listing_ts": 1745238159000
+  },
+  "ERAUSDT": {
+    "innovation": false,
+    "listing_ts": 1752767182000
+  },
+  "ESPORTSUSDT": {
+    "innovation": false,
+    "listing_ts": 1753783524000
+  },
+  "ESUSDT": {
+    "innovation": false,
+    "listing_ts": 1752661653000
+  },
+  "ETCPERP": {
+    "innovation": false,
+    "listing_ts": 1661990400000
+  },
+  "ETCUSDT": {
+    "innovation": false,
+    "listing_ts": 1624950240000
+  },
+  "ETH-26DEC25": {
+    "innovation": false,
+    "listing_ts": 1736496000000
+  },
+  "ETH-26SEP25": {
+    "innovation": false,
+    "listing_ts": 1728028800000
+  },
+  "ETHBTCUSDT": {
+    "innovation": false,
+    "listing_ts": 1717749178000
+  },
+  "ETHFIPERP": {
+    "innovation": false,
+    "listing_ts": 1713961269000
+  },
+  "ETHFIUSDT": {
+    "innovation": false,
+    "listing_ts": 1710767803000
+  },
+  "ETHPERP": {
+    "innovation": false,
+    "listing_ts": 1659657600000
+  },
+  "ETHUSDT": {
+    "innovation": false,
+    "listing_ts": 1615766400000
+  },
+  "ETHUSDT-12SEP25": {
+    "innovation": false,
+    "listing_ts": 1755849600000
+  },
+  "ETHUSDT-19SEP25": {
+    "innovation": false,
+    "listing_ts": 1756454400000
+  },
+  "ETHUSDT-26DEC25": {
+    "innovation": false,
+    "listing_ts": 1743483600000
+  },
+  "ETHUSDT-26JUN26": {
+    "innovation": false,
+    "listing_ts": 1751616000000
+  },
+  "ETHUSDT-26SEP25": {
+    "innovation": false,
+    "listing_ts": 1743483600000
+  },
+  "ETHUSDT-27MAR26": {
+    "innovation": false,
+    "listing_ts": 1743753600000
+  },
+  "ETHUSDT-28NOV25": {
+    "innovation": false,
+    "listing_ts": 1757059200000
+  },
+  "ETHUSDT-31OCT25": {
+    "innovation": false,
+    "listing_ts": 1754640000000
+  },
+  "ETHWUSDT": {
+    "innovation": false,
+    "listing_ts": 1663286400000
+  },
+  "FARTCOINPERP": {
+    "innovation": false,
+    "listing_ts": 1753174355000
+  },
+  "FARTCOINUSDT": {
+    "innovation": false,
+    "listing_ts": 1734683847000
+  },
+  "FHEUSDT": {
+    "innovation": false,
+    "listing_ts": 1744795700000
+  },
+  "FIDAUSDT": {
+    "innovation": false,
+    "listing_ts": 1727254994000
+  },
+  "FILUSDT": {
+    "innovation": false,
+    "listing_ts": 1624950900000
+  },
+  "FIOUSDT": {
+    "innovation": false,
+    "listing_ts": 1727330785000
+  },
+  "FISUSDT": {
+    "innovation": false,
+    "listing_ts": 1753692741000
+  },
+  "FLMUSDT": {
+    "innovation": false,
+    "listing_ts": 1651467612000
+  },
+  "FLOCKUSDT": {
+    "innovation": false,
+    "listing_ts": 1736412607000
+  },
+  "FLOWUSDT": {
+    "innovation": false,
+    "listing_ts": 1637856000000
+  },
+  "FLRUSDT": {
+    "innovation": false,
+    "listing_ts": 1678953508000
+  },
+  "FLUXUSDT": {
+    "innovation": false,
+    "listing_ts": 1725438663000
+  },
+  "FORMUSDT": {
+    "innovation": false,
+    "listing_ts": 1742378167000
+  },
+  "FORTHUSDT": {
+    "innovation": false,
+    "listing_ts": 1690868839000
+  },
+  "FRAGUSDT": {
+    "innovation": false,
+    "listing_ts": 1751361087000
+  },
+  "FUELUSDT": {
+    "innovation": false,
+    "listing_ts": 1735630145000
+  },
+  "FUSDT": {
+    "innovation": false,
+    "listing_ts": 1733480292000
+  },
+  "FWOGUSDT": {
+    "innovation": false,
+    "listing_ts": 1731402187000
+  },
+  "FXSUSDT": {
+    "innovation": false,
+    "listing_ts": 1649044820000
+  },
+  "GALAUSDT": {
+    "innovation": false,
+    "listing_ts": 1636416000000
+  },
+  "GASUSDT": {
+    "innovation": false,
+    "listing_ts": 1698044952000
+  },
+  "GIGAUSDT": {
+    "innovation": false,
+    "listing_ts": 1733989346000
+  },
+  "GLMRUSDT": {
+    "innovation": false,
+    "listing_ts": 1648633250000
+  },
+  "GLMUSDT": {
+    "innovation": false,
+    "listing_ts": 1691643479000
+  },
+  "GMTUSDT": {
+    "innovation": false,
+    "listing_ts": 1647667511000
+  },
+  "GMXUSDT": {
+    "innovation": false,
+    "listing_ts": 1665385570000
+  },
+  "GNOUSDT": {
+    "innovation": false,
+    "listing_ts": 1715687275000
+  },
+  "GOATUSDT": {
+    "innovation": false,
+    "listing_ts": 1729593864000
+  },
+  "GODSUSDT": {
+    "innovation": false,
+    "listing_ts": 1700629341000
+  },
+  "GORKUSDT": {
+    "innovation": false,
+    "listing_ts": 1746440818000
+  },
+  "GPSUSDT": {
+    "innovation": false,
+    "listing_ts": 1739866543000
+  },
+  "GRASSUSDT": {
+    "innovation": false,
+    "listing_ts": 1728987123000
+  },
+  "GRIFFAINUSDT": {
+    "innovation": false,
+    "listing_ts": 1734683999000
+  },
+  "GRTUSDT": {
+    "innovation": false,
+    "listing_ts": 1638748800000
+  },
+  "GTCUSDT": {
+    "innovation": false,
+    "listing_ts": 1638144000000
+  },
+  "GUNUSDT": {
+    "innovation": false,
+    "listing_ts": 1743426729000
+  },
+  "GUSDT": {
+    "innovation": false,
+    "listing_ts": 1721898436000
+  },
+  "HAEDALUSDT": {
+    "innovation": false,
+    "listing_ts": 1746012593000
+  },
+  "HBARPERP": {
+    "innovation": false,
+    "listing_ts": 1753173426000
+  },
+  "HBARUSDT": {
+    "innovation": false,
+    "listing_ts": 1635120000000
+  },
+  "HEIUSDT": {
+    "innovation": false,
+    "listing_ts": 1739525015000
+  },
+  "HFTUSDT": {
+    "innovation": false,
+    "listing_ts": 1678776349000
+  },
+  "HIFIUSDT": {
+    "innovation": false,
+    "listing_ts": 1693210322000
+  },
+  "HIGHUSDT": {
+    "innovation": false,
+    "listing_ts": 1675759370000
+  },
+  "HIPPOUSDT": {
+    "innovation": false,
+    "listing_ts": 1731570967000
+  },
+  "HIVEUSDT": {
+    "innovation": false,
+    "listing_ts": 1734950040000
+  },
+  "HMSTRUSDT": {
+    "innovation": false,
+    "listing_ts": 1726034896000
+  },
+  "HNTUSDT": {
+    "innovation": false,
+    "listing_ts": 1643006840000
+  },
+  "HOMEUSDT": {
+    "innovation": false,
+    "listing_ts": 1749554150000
+  },
+  "HOOKUSDT": {
+    "innovation": false,
+    "listing_ts": 1675758352000
+  },
+  "HOTUSDT": {
+    "innovation": false,
+    "listing_ts": 1648450156000
+  },
+  "HPOS10IUSDT": {
+    "innovation": false,
+    "listing_ts": 1729497361000
+  },
+  "HUMAUSDT": {
+    "innovation": false,
+    "listing_ts": 1748264514000
+  },
+  "HUSDT": {
+    "innovation": false,
+    "listing_ts": 1750845035000
+  },
+  "HYPEPERP": {
+    "innovation": false,
+    "listing_ts": 1746008090000
+  },
+  "HYPERUSDT": {
+    "innovation": false,
+    "listing_ts": 1745323627000
+  },
+  "HYPEUSDT": {
+    "innovation": false,
+    "listing_ts": 1733316740000
+  },
+  "ICNTUSDT": {
+    "innovation": false,
+    "listing_ts": 1751540416000
+  },
+  "ICPUSDT": {
+    "innovation": false,
+    "listing_ts": 1631664000000
+  },
+  "ICXUSDT": {
+    "innovation": false,
+    "listing_ts": 1649830935000
+  },
+  "IDEXUSDT": {
+    "innovation": false,
+    "listing_ts": 1684822236000
+  },
+  "IDUSDT": {
+    "innovation": false,
+    "listing_ts": 1679639388000
+  },
+  "ILVUSDT": {
+    "innovation": false,
+    "listing_ts": 1637884800000
+  },
+  "IMXUSDT": {
+    "innovation": false,
+    "listing_ts": 1637712000000
+  },
+  "INITUSDT": {
+    "innovation": false,
+    "listing_ts": 1744616093000
+  },
+  "INJPERP": {
+    "innovation": false,
+    "listing_ts": 1753173587000
+  },
+  "INJUSDT": {
+    "innovation": false,
+    "listing_ts": 1660694400000
+  },
+  "INUSDT": {
+    "innovation": false,
+    "listing_ts": 1754561821000
+  },
+  "IOSTUSDT": {
+    "innovation": false,
+    "listing_ts": 1633996800000
+  },
+  "IOTAUSDT": {
+    "innovation": false,
+    "listing_ts": 1640772993000
+  },
+  "IOTXUSDT": {
+    "innovation": false,
+    "listing_ts": 1636675200000
+  },
+  "IOUSDT": {
+    "innovation": false,
+    "listing_ts": 1718113740000
+  },
+  "IPPERP": {
+    "innovation": false,
+    "listing_ts": 1753943373000
+  },
+  "IPUSDT": {
+    "innovation": false,
+    "listing_ts": 1738916896000
+  },
+  "JASMYUSDT": {
+    "innovation": false,
+    "listing_ts": 1642574202000
+  },
+  "JELLYJELLYUSDT": {
+    "innovation": false,
+    "listing_ts": 1738219511000
+  },
+  "JOEUSDT": {
+    "innovation": false,
+    "listing_ts": 1680062568000
+  },
+  "JSTUSDT": {
+    "innovation": false,
+    "listing_ts": 1645166741000
+  },
+  "JTOUSDT": {
+    "innovation": false,
+    "listing_ts": 1701978619000
+  },
+  "JUPUSDT": {
+    "innovation": false,
+    "listing_ts": 1706716267000
+  },
+  "JUSDT": {
+    "innovation": false,
+    "listing_ts": 1737542211000
+  },
+  "KAIAUSDT": {
+    "innovation": false,
+    "listing_ts": 1730449474000
+  },
+  "KAITOUSDT": {
+    "innovation": false,
+    "listing_ts": 1740057727000
+  },
+  "KASUSDT": {
+    "innovation": false,
+    "listing_ts": 1691138081000
+  },
+  "KAVAUSDT": {
+    "innovation": false,
+    "listing_ts": 1641801287000
+  },
+  "KDAUSDT": {
+    "innovation": false,
+    "listing_ts": 1647311832000
+  },
+  "KERNELUSDT": {
+    "innovation": false,
+    "listing_ts": 1744632444000
+  },
+  "KMNOUSDT": {
+    "innovation": false,
+    "listing_ts": 1728463961000
+  },
+  "KNCUSDT": {
+    "innovation": false,
+    "listing_ts": 1641800434000
+  },
+  "KSMUSDT": {
+    "innovation": false,
+    "listing_ts": 1633996800000
+  },
+  "KUSDT": {
+    "innovation": false,
+    "listing_ts": 1754641777000
+  },
+  "L3USDT": {
+    "innovation": false,
+    "listing_ts": 1722417009000
+  },
+  "LAUNCHCOINUSDT": {
+    "innovation": false,
+    "listing_ts": 1747213476000
+  },
+  "LAUSDT": {
+    "innovation": false,
+    "listing_ts": 1749100801000
+  },
+  "LDOUSDT": {
+    "innovation": false,
+    "listing_ts": 1658300019000
+  },
+  "LINKPERP": {
+    "innovation": false,
+    "listing_ts": 1732783638000
+  },
+  "LINKUSDT": {
+    "innovation": false,
+    "listing_ts": 1514764800000
+  },
+  "LISTAUSDT": {
+    "innovation": false,
+    "listing_ts": 1718965015000
+  },
+  "LOOKSUSDT": {
+    "innovation": false,
+    "listing_ts": 1643006232000
+  },
+  "LPTUSDT": {
+    "innovation": false,
+    "listing_ts": 1639357959000
+  },
+  "LQTYUSDT": {
+    "innovation": false,
+    "listing_ts": 1678694760000
+  },
+  "LRCUSDT": {
+    "innovation": false,
+    "listing_ts": 1636588800000
+  },
+  "LSKUSDT": {
+    "innovation": false,
+    "listing_ts": 1704208975000
+  },
+  "LTCPERP": {
+    "innovation": false,
+    "listing_ts": 1746010937000
+  },
+  "LTCUSDT": {
+    "innovation": false,
+    "listing_ts": 1514764800000
+  },
+  "LUMIAUSDT": {
+    "innovation": false,
+    "listing_ts": 1729841762000
+  },
+  "LUNA2USDT": {
+    "innovation": false,
+    "listing_ts": 1653983403000
+  },
+  "MAGICUSDT": {
+    "innovation": false,
+    "listing_ts": 1670897921000
+  },
+  "MAJORUSDT": {
+    "innovation": false,
+    "listing_ts": 1731921482000
+  },
+  "MANAUSDT": {
+    "innovation": false,
+    "listing_ts": 1636329600000
+  },
+  "MANTAUSDT": {
+    "innovation": false,
+    "listing_ts": 1705575778000
+  },
+  "MASAUSDT": {
+    "innovation": false,
+    "listing_ts": 1716284092000
+  },
+  "MASKUSDT": {
+    "innovation": false,
+    "listing_ts": 1638444542000
+  },
+  "MAVIAUSDT": {
+    "innovation": false,
+    "listing_ts": 1707297146000
+  },
+  "MAVUSDT": {
+    "innovation": false,
+    "listing_ts": 1687945209000
+  },
+  "MBOXUSDT": {
+    "innovation": false,
+    "listing_ts": 1705574743000
+  },
+  "MELANIAUSDT": {
+    "innovation": false,
+    "listing_ts": 1737350019000
+  },
+  "MEMEUSDT": {
+    "innovation": false,
+    "listing_ts": 1699001325000
+  },
+  "MERLUSDT": {
+    "innovation": false,
+    "listing_ts": 1713524541000
+  },
+  "METISUSDT": {
+    "innovation": false,
+    "listing_ts": 1704207924000
+  },
+  "MEUSDT": {
+    "innovation": false,
+    "listing_ts": 1732521795000
+  },
+  "MEWUSDT": {
+    "innovation": false,
+    "listing_ts": 1713863741000
+  },
+  "MILKUSDT": {
+    "innovation": false,
+    "listing_ts": 1746527288000
+  },
+  "MINAUSDT": {
+    "innovation": false,
+    "listing_ts": 1649228613000
+  },
+  "MITOUSDT": {
+    "innovation": false,
+    "listing_ts": 1756462419000
+  },
+  "MLNUSDT": {
+    "innovation": false,
+    "listing_ts": 1744185886000
+  },
+  "MNTPERP": {
+    "innovation": false,
+    "listing_ts": 1713962898000
+  },
+  "MNTUSDT": {
+    "innovation": false,
+    "listing_ts": 1696225255000
+  },
+  "MOCAUSDT": {
+    "innovation": false,
+    "listing_ts": 1720778262000
+  },
+  "MOODENGPERP": {
+    "innovation": false,
+    "listing_ts": 1753943765000
+  },
+  "MOODENGUSDT": {
+    "innovation": false,
+    "listing_ts": 1727765946000
+  },
+  "MORPHOUSDT": {
+    "innovation": false,
+    "listing_ts": 1732264559000
+  },
+  "MOVEUSDT": {
+    "innovation": false,
+    "listing_ts": 1733745977000
+  },
+  "MOVRUSDT": {
+    "innovation": false,
+    "listing_ts": 1700719762000
+  },
+  "MTLUSDT": {
+    "innovation": false,
+    "listing_ts": 1649831690000
+  },
+  "MUBARAKUSDT": {
+    "innovation": false,
+    "listing_ts": 1742197296000
+  },
+  "MUSDT": {
+    "innovation": false,
+    "listing_ts": 1751967363000
+  },
+  "MVLUSDT": {
+    "innovation": false,
+    "listing_ts": 1732864286000
+  },
+  "MYRIAUSDT": {
+    "innovation": false,
+    "listing_ts": 1702620879000
+  },
+  "MYROUSDT": {
+    "innovation": false,
+    "listing_ts": 1705585191000
+  },
+  "MYXUSDT": {
+    "innovation": false,
+    "listing_ts": 1754386082000
+  },
+  "NAORISUSDT": {
+    "innovation": false,
+    "listing_ts": 1753964050000
+  },
+  "NEARUSDT": {
+    "innovation": false,
+    "listing_ts": 1633910400000
+  },
+  "NEIROETHUSDT": {
+    "innovation": false,
+    "listing_ts": 1723712929000
+  },
+  "NEOUSDT": {
+    "innovation": false,
+    "listing_ts": 1643509229000
+  },
+  "NEWTUSDT": {
+    "innovation": false,
+    "listing_ts": 1750405506000
+  },
+  "NFPUSDT": {
+    "innovation": false,
+    "listing_ts": 1703673025000
+  },
+  "NILUSDT": {
+    "innovation": false,
+    "listing_ts": 1742468146000
+  },
+  "NKNUSDT": {
+    "innovation": false,
+    "listing_ts": 1676960331000
+  },
+  "NMRUSDT": {
+    "innovation": false,
+    "listing_ts": 1693804592000
+  },
+  "NODEUSDT": {
+    "innovation": false,
+    "listing_ts": 1756978739000
+  },
+  "NOTPERP": {
+    "innovation": false,
+    "listing_ts": 1726653948000
+  },
+  "NOTUSDT": {
+    "innovation": false,
+    "listing_ts": 1715874083000
+  },
+  "NSUSDT": {
+    "innovation": false,
+    "listing_ts": 1734683950000
+  },
+  "NTRNUSDT": {
+    "innovation": false,
+    "listing_ts": 1696936478000
+  },
+  "NXPCUSDT": {
+    "innovation": false,
+    "listing_ts": 1747289965000
+  },
+  "OBOLUSDT": {
+    "innovation": false,
+    "listing_ts": 1746617368000
+  },
+  "OBTUSDT": {
+    "innovation": false,
+    "listing_ts": 1745572693000
+  },
+  "OGNUSDT": {
+    "innovation": false,
+    "listing_ts": 1647671419000
+  },
+  "OGUSDT": {
+    "innovation": false,
+    "listing_ts": 1693210797000
+  },
+  "OLUSDT": {
+    "innovation": false,
+    "listing_ts": 1732178996000
+  },
+  "OMNIUSDT": {
+    "innovation": false,
+    "listing_ts": 1713358641000
+  },
+  "OMUSDT": {
+    "innovation": false,
+    "listing_ts": 1710743501000
+  },
+  "ONDOPERP": {
+    "innovation": false,
+    "listing_ts": 1715156869000
+  },
+  "ONDOUSDT": {
+    "innovation": false,
+    "listing_ts": 1705919392000
+  },
+  "ONEUSDT": {
+    "innovation": false,
+    "listing_ts": 1635120000000
+  },
+  "ONGUSDT": {
+    "innovation": false,
+    "listing_ts": 1701155663000
+  },
+  "ONTUSDT": {
+    "innovation": false,
+    "listing_ts": 1654497420000
+  },
+  "OPENUSDT": {
+    "innovation": false,
+    "listing_ts": 1757336655000
+  },
+  "OPPERP": {
+    "innovation": false,
+    "listing_ts": 1661990400000
+  },
+  "OPUSDT": {
+    "innovation": false,
+    "listing_ts": 1654059063000
+  },
+  "ORBSUSDT": {
+    "innovation": false,
+    "listing_ts": 1696837542000
+  },
+  "ORCAUSDT": {
+    "innovation": false,
+    "listing_ts": 1711963329000
+  },
+  "ORDERUSDT": {
+    "innovation": false,
+    "listing_ts": 1724749336000
+  },
+  "ORDIPERP": {
+    "innovation": false,
+    "listing_ts": 1713792603000
+  },
+  "ORDIUSDT": {
+    "innovation": false,
+    "listing_ts": 1684739410000
+  },
+  "OSMOUSDT": {
+    "innovation": false,
+    "listing_ts": 1717060123000
+  },
+  "OXTUSDT": {
+    "innovation": false,
+    "listing_ts": 1691643171000
+  },
+  "PARTIUSDT": {
+    "innovation": false,
+    "listing_ts": 1742908134000
+  },
+  "PAXGUSDT": {
+    "innovation": false,
+    "listing_ts": 1647245226000
+  },
+  "PEAQUSDT": {
+    "innovation": false,
+    "listing_ts": 1732005101000
+  },
+  "PENDLEUSDT": {
+    "innovation": false,
+    "listing_ts": 1688542002000
+  },
+  "PENGUPERP": {
+    "innovation": false,
+    "listing_ts": 1753173983000
+  },
+  "PENGUUSDT": {
+    "innovation": false,
+    "listing_ts": 1734445346000
+  },
+  "PEOPLEUSDT": {
+    "innovation": false,
+    "listing_ts": 1640749024000
+  },
+  "PERPUSDT": {
+    "innovation": false,
+    "listing_ts": 1693981865000
+  },
+  "PHAUSDT": {
+    "innovation": false,
+    "listing_ts": 1717149720000
+  },
+  "PHBUSDT": {
+    "innovation": false,
+    "listing_ts": 1684396645000
+  },
+  "PIPPINUSDT": {
+    "innovation": false,
+    "listing_ts": 1737103122000
+  },
+  "PIXELUSDT": {
+    "innovation": false,
+    "listing_ts": 1708416370000
+  },
+  "PLUMEUSDT": {
+    "innovation": false,
+    "listing_ts": 1737701100000
+  },
+  "PNUTPERP": {
+    "innovation": false,
+    "listing_ts": 1753173737000
+  },
+  "PNUTUSDT": {
+    "innovation": false,
+    "listing_ts": 1731313006000
+  },
+  "POLPERP": {
+    "innovation": false,
+    "listing_ts": 1726654249000
+  },
+  "POLUSDT": {
+    "innovation": false,
+    "listing_ts": 1725525013000
+  },
+  "POLYXUSDT": {
+    "innovation": false,
+    "listing_ts": 1698129996000
+  },
+  "PONKEUSDT": {
+    "innovation": false,
+    "listing_ts": 1717749307000
+  },
+  "POPCATPERP": {
+    "innovation": false,
+    "listing_ts": 1726653613000
+  },
+  "POPCATUSDT": {
+    "innovation": false,
+    "listing_ts": 1711609319000
+  },
+  "PORTALUSDT": {
+    "innovation": false,
+    "listing_ts": 1709264458000
+  },
+  "POWRUSDT": {
+    "innovation": false,
+    "listing_ts": 1698130882000
+  },
+  "PRCLUSDT": {
+    "innovation": false,
+    "listing_ts": 1721208686000
+  },
+  "PRIMEUSDT": {
+    "innovation": false,
+    "listing_ts": 1727682761000
+  },
+  "PROMPTUSDT": {
+    "innovation": false,
+    "listing_ts": 1744293965000
+  },
+  "PROMUSDT": {
+    "innovation": false,
+    "listing_ts": 1693891796000
+  },
+  "PROVEUSDT": {
+    "innovation": false,
+    "listing_ts": 1754413429000
+  },
+  "PTBUSDT": {
+    "innovation": false,
+    "listing_ts": 1756904871000
+  },
+  "PUFFERUSDT": {
+    "innovation": false,
+    "listing_ts": 1728909421000
+  },
+  "PUMPBTCUSDT": {
+    "innovation": false,
+    "listing_ts": 1744359394000
+  },
+  "PUMPFUNPERP": {
+    "innovation": false,
+    "listing_ts": 1755070501000
+  },
+  "PUMPFUNUSDT": {
+    "innovation": false,
+    "listing_ts": 1752119132000
+  },
+  "PUNDIXUSDT": {
+    "innovation": false,
+    "listing_ts": 1746011520000
+  },
+  "PYRUSDT": {
+    "innovation": false,
+    "listing_ts": 1728289161000
+  },
+  "PYTHUSDT": {
+    "innovation": false,
+    "listing_ts": 1700543350000
+  },
+  "QIUSDT": {
+    "innovation": false,
+    "listing_ts": 1702365139000
+  },
+  "QNTUSDT": {
+    "innovation": false,
+    "listing_ts": 1687154400000
+  },
+  "QTUMUSDT": {
+    "innovation": false,
+    "listing_ts": 1639356566000
+  },
+  "QUICKUSDT": {
+    "innovation": false,
+    "listing_ts": 1725958621000
+  },
+  "RADUSDT": {
+    "innovation": false,
+    "listing_ts": 1686210174000
+  },
+  "RAREUSDT": {
+    "innovation": false,
+    "listing_ts": 1701067684000
+  },
+  "RAYDIUMUSDT": {
+    "innovation": false,
+    "listing_ts": 1717492319000
+  },
+  "RDNTUSDT": {
+    "innovation": false,
+    "listing_ts": 1681715107000
+  },
+  "REDUSDT": {
+    "innovation": false,
+    "listing_ts": 1740552652000
+  },
+  "RENDERUSDT": {
+    "innovation": false,
+    "listing_ts": 1721982407000
+  },
+  "REQUSDT": {
+    "innovation": false,
+    "listing_ts": 1638748800000
+  },
+  "RESOLVPERP": {
+    "innovation": false,
+    "listing_ts": 1753944066000
+  },
+  "RESOLVUSDT": {
+    "innovation": false,
+    "listing_ts": 1749561099000
+  },
+  "REXUSDT": {
+    "innovation": false,
+    "listing_ts": 1736412456000
+  },
+  "REZUSDT": {
+    "innovation": false,
+    "listing_ts": 1715154797000
+  },
+  "RFCUSDT": {
+    "innovation": false,
+    "listing_ts": 1744615829000
+  },
+  "RHEAUSDT": {
+    "innovation": false,
+    "listing_ts": 1754478823000
+  },
+  "RIFUSDT": {
+    "innovation": false,
+    "listing_ts": 1698044016000
+  },
+  "RLCUSDT": {
+    "innovation": false,
+    "listing_ts": 1679468899000
+  },
+  "ROAMUSDT": {
+    "innovation": false,
+    "listing_ts": 1741333231000
+  },
+  "RONINUSDT": {
+    "innovation": false,
+    "listing_ts": 1739430673000
+  },
+  "ROSEUSDT": {
+    "innovation": false,
+    "listing_ts": 1642140231000
+  },
+  "RPLUSDT": {
+    "innovation": false,
+    "listing_ts": 1677655946000
+  },
+  "RSRUSDT": {
+    "innovation": false,
+    "listing_ts": 1638286101000
+  },
+  "RSS3USDT": {
+    "innovation": false,
+    "listing_ts": 1645581254000
+  },
+  "RUNEUSDT": {
+    "innovation": false,
+    "listing_ts": 1638144000000
+  },
+  "RVNUSDT": {
+    "innovation": false,
+    "listing_ts": 1641454067000
+  },
+  "SAFEUSDT": {
+    "innovation": false,
+    "listing_ts": 1714382689000
+  },
+  "SAGAUSDT": {
+    "innovation": false,
+    "listing_ts": 1712662154000
+  },
+  "SAHARAPERP": {
+    "innovation": false,
+    "listing_ts": 1753945195000
+  },
+  "SAHARAUSDT": {
+    "innovation": false,
+    "listing_ts": 1750417893000
+  },
+  "SANDUSDT": {
+    "innovation": false,
+    "listing_ts": 1635724800000
+  },
+  "SAPIENUSDT": {
+    "innovation": false,
+    "listing_ts": 1755710378000
+  },
+  "SAROSUSDT": {
+    "innovation": false,
+    "listing_ts": 1747727292000
+  },
+  "SCAUSDT": {
+    "innovation": false,
+    "listing_ts": 1710310660000
+  },
+  "SCRTUSDT": {
+    "innovation": false,
+    "listing_ts": 1648633843000
+  },
+  "SCRUSDT": {
+    "innovation": false,
+    "listing_ts": 1728390358000
+  },
+  "SCUSDT": {
+    "innovation": false,
+    "listing_ts": 1638285958000
+  },
+  "SDUSDT": {
+    "innovation": false,
+    "listing_ts": 1731570811000
+  },
+  "SEIPERP": {
+    "innovation": false,
+    "listing_ts": 1753945422000
+  },
+  "SEIUSDT": {
+    "innovation": false,
+    "listing_ts": 1692156527000
+  },
+  "SENDUSDT": {
+    "innovation": false,
+    "listing_ts": 1734078707000
+  },
+  "SERAPHUSDT": {
+    "innovation": false,
+    "listing_ts": 1741680988000
+  },
+  "SFPUSDT": {
+    "innovation": false,
+    "listing_ts": 1637884800000
+  },
+  "SHELLUSDT": {
+    "innovation": false,
+    "listing_ts": 1739777623000
+  },
+  "SHIB1000PERP": {
+    "innovation": false,
+    "listing_ts": 1715333309000
+  },
+  "SHIB1000USDT": {
+    "innovation": false,
+    "listing_ts": 1634688000000
+  },
+  "SIGNUSDT": {
+    "innovation": false,
+    "listing_ts": 1745838563000
+  },
+  "SIRENUSDT": {
+    "innovation": false,
+    "listing_ts": 1742613642000
+  },
+  "SKATEUSDT": {
+    "innovation": false,
+    "listing_ts": 1749463898000
+  },
+  "SKLUSDT": {
+    "innovation": false,
+    "listing_ts": 1647937788000
+  },
+  "SKYAIUSDT": {
+    "innovation": false,
+    "listing_ts": 1747131653000
+  },
+  "SKYUSDT": {
+    "innovation": false,
+    "listing_ts": 1754900886000
+  },
+  "SLERFUSDT": {
+    "innovation": false,
+    "listing_ts": 1710761101000
+  },
+  "SLFUSDT": {
+    "innovation": false,
+    "listing_ts": 1725353953000
+  },
+  "SLPUSDT": {
+    "innovation": false,
+    "listing_ts": 1637164800000
+  }
+}

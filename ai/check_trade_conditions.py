@@ -95,7 +95,7 @@ def _bucket(value: float | None, edges: List[tuple]) -> str | None:
             return label
     return None
 
-# ===================== Buckets (на майбутнє, якщо треба) =====================
+# ===================== Buckets =====================
 
 RSI_BUCKET_EDGES = [
     (None, 30, "<=30"),
@@ -143,7 +143,7 @@ def _build_derived(conditions: Dict[str, Any]) -> Dict[str, Any]:
         bp = round(bp * 100.0, 2)
     c["bollinger_position"] = bp
 
-    # buckets (опційні)
+    # buckets
     c["rsi_bucket"]      = _bucket(rsi_value, RSI_BUCKET_EDGES)
     c["stoch_k_bucket"]  = _bucket(stoch_k,   STOCH_BUCKET_EDGES)
     c["stoch_d_bucket"]  = _bucket(stoch_d,   STOCH_BUCKET_EDGES)
@@ -185,13 +185,12 @@ def _build_derived(conditions: Dict[str, Any]) -> Dict[str, Any]:
     patterns = c.get("patterns") or []
     if isinstance(patterns, list):
         pset = {_lc(p.get("type") if isinstance(p, dict) else p) for p in patterns if p}
-        pdir = {_lc(p.get("direction")) for p in patterns if isinstance(p, dict) and p.get("direction")}
     else:
-        pset, pdir = set(), set()
+        pset = set()
     def pflag(name: str) -> str:
         return "yes" if name in pset else "no"
-    c["pat_bullish_engulfing"] = pflag("engulfing") if "bullish" in pdir else "no"
-    c["pat_bearish_engulfing"] = pflag("engulfing") if "bearish" in pdir else "no"
+    c["pat_bullish_engulfing"] = pflag("bullish_engulfing")
+    c["pat_bearish_engulfing"] = pflag("bearish_engulfing")
     c["pat_hammer"]            = "yes" if "hammer" in pset else "no"
     c["pat_shooting_star"]     = "yes" if "shooting_star" in pset else "no"
     c["pat_morning_star"]      = "yes" if "morning_star" in pset else "no"
@@ -231,11 +230,9 @@ def _build_derived(conditions: Dict[str, Any]) -> Dict[str, Any]:
     c["bollinger_width"] = _to_float(c.get("bollinger_width"), None)
 
     # ===== SON-specific features =====
-    # proximity_to_high: 0..1 вже є; нормалізуємо/обрізаємо
     p2h = _to_float(c.get("proximity_to_high"), None)
     if p2h is not None:
         c["proximity_to_high"] = max(0.0, min(1.0, p2h))
-    # proximity_to_low: якщо немає — порахуємо від support/resistance
     p2l = _to_float(c.get("proximity_to_low"), None)
     if p2l is None:
         try:
@@ -244,7 +241,7 @@ def _build_derived(conditions: Dict[str, Any]) -> Dict[str, Any]:
             pr  = _to_float(c.get("price") or c.get("current_price"), None)
             if sup is not None and res is not None and pr is not None and res > sup:
                 p2l = max(0.0, min(1.0, (pr - sup) / (res - sup)))  # 0 біля support, 1 біля resistance
-                p2l = 1.0 - p2l  # перетворимо «наскільки близько до лоу»
+                p2l = 1.0 - p2l
             else:
                 p2l = None
         except Exception:
@@ -254,7 +251,7 @@ def _build_derived(conditions: Dict[str, Any]) -> Dict[str, Any]:
 
     return c
 
-# ===================== Regime detection (довідково) =====================
+# ===================== Regime detection =====================
 
 def _detect_regime(c: Dict[str, Any]) -> Dict[str, Any]:
     atrp = _to_float(c.get("atr_percent"), None)
@@ -271,41 +268,56 @@ def _detect_regime(c: Dict[str, Any]) -> Dict[str, Any]:
         "is_range":    bool(ranged and not trending),
     }
 
-# ===================== SON weights / thresholds =====================
+# ===================== SON weights / thresholds (ПІДКРУЧЕНО) =====================
 
-W_CORE   = 3.5   # ядро сильніше
-W_PAIR   = 1.6   # підтвердження легші
-W_BONUS  = 0.8   # невеликий бонус за режим
+W_CORE   = 3.5    # ядро сильніше
+W_PAIR   = 1.6    # підтвердження легші
+W_BONUS  = 0.8    # бонус за трендовість
 
-THRESH_LONG  = 7.5
-THRESH_SHORT = 13.5
+THRESH_LONG  = 9.5
+THRESH_SHORT = 9.5
 
-ENFORCE_TREND_GATES = False
+ENFORCE_TREND_GATES = False  # контртренд через MR можливий
 
 TREND_ALIGNMENT = {
     "align_with_global": False,
     "align_with_micro5": False,
-    "allow_flat_as_neutral": False,
-    "bearish_block_levels": {"bearish","strong_bearish"},
-    "bullish_block_levels": {"bullish","strong_bullish"},
-    "micro_bearish_levels": {"bearish","strong_bearish"},
-    "micro_bullish_levels": {"bullish","strong_bullish"},
+    "allow_flat_as_neutral": True,
+    "bearish_block_levels": {"strong_bearish"},
+    "bullish_block_levels": {"strong_bullish"},
+    "micro_bearish_levels": {"strong_bearish"},
+    "micro_bullish_levels": {"strong_bullish"},
 }
 
 ANTI_FALSE_OPEN = {
-    "require_closed_candle": False,
-    "hysteresis_bars": 1,
-    "min_pair_hits_long": 0,
+    "require_closed_candle": True,
+    "hysteresis_bars": 1,               # мін. інерція, щоб спіймати старт
+    "min_pair_hits_long": 2,
     "min_pair_hits_short": 2,
     "need_long_confirm_any": False,
     "need_short_confirm_any": False,
-    "atr_pct_bounds": (0.25, 12.0),
+    "atr_pct_bounds": (0.35, 7.0),
     "exclusive_blockers": True
 }
 
+# додатковий soft-гейт по звужених бб (звичайний режим)
+MIN_BB_WIDTH = 0.35
+
 DECISION_DELTA = 0.5
 
-# ===================== SON rule sets =====================
+# ⚡ FAST-TRACK: ранній вхід біля хай/лоу
+FASTTRACK = {
+    "enable": True,
+    "min_cores": 2,                 # скільки core-умов треба для старту
+    "min_pairs": 1,                 # 1 підтвердження достатньо
+    "min_bars_in_state": 1,         # не чекаємо 2 бари
+    "allow_open_candle": True,      # можна до закриття 15m
+    "min_bb_width": 0.003,          # дозволяємо дуже вузькі смуги (стиснення → старт)
+    "prox_hi": 0.98,                # SHORT: близько до хайу
+    "prox_lo": 0.98,                # LONG: близько до лоу
+}
+
+# ===================== SON rule sets (ПІДКРУЧЕНО) =====================
 
 # ЯДРО LONG (моментум вверх + мікро-тренд)
 SON_LONG_CORE: List[Tuple[str, str]] = [
@@ -315,13 +327,16 @@ SON_LONG_CORE: List[Tuple[str, str]] = [
     ("microtrend_5m", "bullish"),
 ]
 
-# ПІДТВЕРДЖЕННЯ LONG
+# ПІДТВЕРДЖЕННЯ LONG — нижня зона Боллінджера/RSI + мікро
 SON_LONG_PAIRS: List[List[Tuple[str, str]]] = [
     [("support_position","near_support"), ("microtrend_1m","bullish")],
+    [("support_position","near_support"), ("boll_bucket","<=30")],
+    [("boll_bucket","<=30"), ("rsi_bucket","<=30")],
     [("pat_hammer","yes"), ("rsi_trend","up")],
     [("pat_bullish_engulfing","yes"), ("rsi_trend","up")],
     [("volume_category","high"), ("rsi_trend","up")],
     [("volume_category","very_high"), ("rsi_trend","up")],
+    [("microtrend_1m","bullish"), ("microtrend_5m","bullish")],
 ]
 
 # ЯДРО SHORT (моментум вниз + мікро-тренд)
@@ -332,37 +347,55 @@ SON_SHORT_CORE: List[Tuple[str, str]] = [
     ("microtrend_5m", "bearish"),
 ]
 
-# ПІДТВЕРДЖЕННЯ SHORT
+# ПІДТВЕРДЖЕННЯ SHORT — верхня зона Боллінджера/RSI + мікро
 SON_SHORT_PAIRS: List[List[Tuple[str, str]]] = [
     [("support_position","near_resistance"), ("microtrend_1m","bearish")],
+    [("support_position","near_resistance"), ("boll_bucket",">70")],
+    [("boll_bucket",">70"), ("rsi_bucket",">70")],
     [("pat_shooting_star","yes"), ("rsi_trend","down")],
     [("pat_bearish_engulfing","yes"), ("rsi_trend","down")],
     [("volume_category","high"), ("rsi_trend","down")],
     [("volume_category","very_high"), ("rsi_trend","down")],
+    [("microtrend_1m","bearish"), ("microtrend_5m","bearish")],
 ]
 
-# Додаткові «м’які» фактори від SON (проximity):
+# Додаткові «м’які» фактори
 def _son_soft_score(c: Dict[str, Any], side: str) -> Tuple[float, List[str], List[str]]:
     score = 0.0
     matched, reasons = [], []
     p2h = _to_float(c.get("proximity_to_high"), None)
     p2l = _to_float(c.get("proximity_to_low"), None)
 
+    # близькість до екстремумів
     if side == "LONG":
-        # близько до low → плюс; дуже близько до high → мінус (через відсікання в allow не втручаємось — лише в score)
         if p2l is not None and p2l >= 0.85:
-            score += 1.0
-            matched.append("proximity_to_low>=0.85")
+            score += 1.0; matched.append("proximity_to_low>=0.85")
         if p2h is not None and p2h >= 0.95:
-            score -= 0.6
-            reasons.append("warn: near_high_for_long")
+            score -= 0.6; reasons.append("warn: near_high_for_long")
     else:
         if p2h is not None and p2h >= 0.85:
-            score += 1.0
-            matched.append("proximity_to_high>=0.85")
+            score += 1.0; matched.append("proximity_to_high>=0.85")
         if p2l is not None and p2l >= 0.95:
-            score -= 0.6
-            reasons.append("warn: near_low_for_short")
+            score -= 0.6; reasons.append("warn: near_low_for_short")
+
+    # легкий трендовий ухил
+    g = str(c.get("global_trend","flat")).lower()
+    if side == "LONG" and g in {"bullish","strong_bullish"}:
+        score += 0.4; matched.append("global_trend_supports_long")
+    if side == "SHORT" and g in {"bearish","strong_bearish"}:
+        score += 0.4; matched.append("global_trend_supports_short")
+
+    # RSI divergence як дрібний буст
+    div = c.get("rsi_divergence", {"state":"none","score":0.0})
+    try:
+        dstate = str(div.get("state","")).lower()
+        dscore = float(div.get("score", 0.0) or 0.0)
+    except Exception:
+        dstate, dscore = "none", 0.0
+    if side == "LONG" and dstate.startswith("bull"):
+        score += min(0.6, dscore); matched.append("rsi_divergence_bull")
+    if side == "SHORT" and dstate.startswith("bear"):
+        score += min(0.6, dscore); matched.append("rsi_divergence_bear")
 
     return score, matched, reasons
 
@@ -396,19 +429,52 @@ def _score_block(c: Dict[str, Any], core: List[Tuple[str, str]], pairs: List[Pai
     if pair_hits:
         reasons.append(f"{side}.{tag}.pairs hits={len(pair_hits)} → {pair_hits}")
 
-    return {"score": score, "matched": matched, "reasons": reasons, "_pair_hits_count": len(pair_hits)}
+    return {
+        "score": score,
+        "matched": matched,
+        "reasons": reasons,
+        "_pair_hits_count": len(pair_hits),
+        "_core_hits_count": len(core_hits)   # 👈 потрібно для FAST-TRACK
+    }
 
 def _apply_regime_bonus(side: str, regime: Dict[str, Any], scorepack: Dict[str, Any]) -> None:
-    if side == "LONG":
-        if regime["is_trend"]:
-            scorepack["score"] += W_BONUS
-            scorepack["reasons"].append("LONG.bonus trend")
-    else:
-        if regime["is_trend"]:
-            scorepack["score"] += W_BONUS
-            scorepack["reasons"].append("SHORT.bonus trend")
+    if regime["is_trend"]:
+        scorepack["score"] += W_BONUS
+        scorepack["reasons"].append(f"{side}.bonus trend")
 
-# ===================== Anti-noise & Alignment filters =====================
+# ===================== FAST-TRACK детектор =====================
+
+def _is_fasttrack(side: str, c: Dict[str, Any], res_total: Dict[str, Any]) -> Tuple[bool, str]:
+    if not FASTTRACK.get("enable", False):
+        return False, ""
+    cores = int(res_total.get("_core_hits_count", 0))
+    pairs = int(res_total.get("_pair_hits_count", 0))
+    bis   = int(c.get("bars_in_state", 0) or 0)
+    bbw   = _to_float(c.get("bollinger_width"), None)
+    p2h   = _to_float(c.get("proximity_to_high"), None) or 0.0
+    p2l   = _to_float(c.get("proximity_to_low"), None)  or 0.0
+
+    if cores < FASTTRACK["min_cores"]:
+        return False, ""
+    if pairs < FASTTRACK["min_pairs"]:
+        return False, ""
+    if bis < FASTTRACK["min_bars_in_state"]:
+        return False, ""
+
+    # близько до екстремуму
+    if side == "SHORT" and p2h < FASTTRACK["prox_hi"]:
+        return False, ""
+    if side == "LONG"  and p2l < FASTTRACK["prox_lo"]:
+        return False, ""
+
+    # smuga може бути дуже вузькою — саме це і є рання фаза
+    if bbw is not None and float(bbw) < FASTTRACK["min_bb_width"]:
+        # навіть краще — стискання
+        pass
+
+    return True, f"fasttrack:{side.lower()} cores={cores} pairs={pairs} bis={bis} prox_ok=1"
+
+# ===================== Anti-noise & Alignment filters (ПІДКРУЧЕНО) =====================
 
 def _meets_pairs_quorum(res: Dict[str, Any], min_pairs: int) -> bool:
     if not min_pairs:
@@ -445,63 +511,93 @@ def _trend_alignment_blocks(side: str, c: Dict[str, Any]) -> str | None:
             return f"align: micro5_bull({m5})"
     return None
 
-# Опціональні ґейти (вимикаються тумблером)
-BLOCK_LONG  = [("global_trend","bearish"), ("global_trend","strong_bearish")]
-BLOCK_SHORT = [("global_trend","bullish"), ("global_trend","strong_bullish")]
+BLOCK_LONG  = [("global_trend","strong_bearish")]
+BLOCK_SHORT = [("global_trend","strong_bullish")]
 
 def _apply_anti_filters(side: str, c: Dict[str, Any], res_total: Dict[str, Any], allow: bool) -> Tuple[bool, Dict[str, Any]]:
-    if not allow:
-        return allow, res_total
+    reasons_accum = res_total.setdefault("reasons", [])
 
+    # ⚡ Якщо FAST-TRACK — розслабимо деякі гейти
+    fast_ok, fast_note = _is_fasttrack(side, c, res_total)
+    res_total["fasttrack"] = fast_ok
+    if fast_ok:
+        reasons_accum.append(fast_note)
+
+    # трендові ґейти (опціонально)
     if ENFORCE_TREND_GATES:
         g = str(c.get("global_trend","neutral")).lower()
         m5 = str(c.get("microtrend_5m","neutral")).lower()
         if side == "LONG":
             if g not in {"bullish","strong_bullish"}:
-                allow = False; res_total["reasons"].append("long: require_global_bullish")
+                allow = False; reasons_accum.append("long: require_global_bullish")
             if allow and m5 in {"bearish","strong_bearish"}:
-                allow = False; res_total["reasons"].append("long: micro5_bearish_block")
+                allow = False; reasons_accum.append("long: micro5_bearish_block")
         else:
             if g not in {"bearish","strong_bearish"}:
-                allow = False; res_total["reasons"].append("short: require_global_bearish")
+                allow = False; reasons_accum.append("short: require_global_bearish")
             if allow and m5 in {"bullish","strong_bullish"}:
-                allow = False; res_total["reasons"].append("short: micro5_bullish_block")
-        if not allow:
-            return allow, res_total
+                allow = False; reasons_accum.append("short: micro5_bullish_block")
+
     else:
-        res_total.setdefault("reasons", []).append("trend_gates: disabled")
+        reasons_accum.append("trend_gates: disabled")
 
     align_reason = _trend_alignment_blocks(side, c)
-    if align_reason:
+    if align_reason and not fast_ok:
         allow = False
-        res_total["reasons"].append(align_reason)
+        reasons_accum.append(align_reason)
 
-    if allow and ANTI_FALSE_OPEN["require_closed_candle"] and not bool(c.get("bar_closed", True)):
-        allow = False; res_total["reasons"].append("anti: wait_close")
+    # ❗️Жорсткі анти-фальстарт блокери (RSI + SR) — діють завжди
+    if side == "LONG":
+        if c.get("support_position") == "near_resistance" and c.get("rsi_bucket") == ">70":
+            allow = False; reasons_accum.append("anti: long near_resistance & overbought")
+    else:
+        if c.get("support_position") == "near_support" and c.get("rsi_bucket") == "<=30":
+            allow = False; reasons_accum.append("anti: short near_support & oversold")
 
-    hb = int(ANTI_FALSE_OPEN.get("hysteresis_bars", 0) or 0)
-    if allow and hb > 0:
-        bis = int(c.get("bars_in_state", 0) or 0)
-        if bis < hb:
-            allow = False; res_total["reasons"].append(f"anti: hysteresis<{hb}")
+    # closed candle — можна пропустити ТІЛЬКИ у fast-track
+    if ANTI_FALSE_OPEN["require_closed_candle"] and not bool(c.get("bar_closed", True)):
+        if fast_ok and FASTTRACK.get("allow_open_candle", False):
+            reasons_accum.append("fasttrack: allow_open_candle")
+        else:
+            allow = False; reasons_accum.append("anti: wait_close")
 
+    # гістерезис — у fast-track достатньо 1 бара
+    hb_required = ANTI_FALSE_OPEN.get("hysteresis_bars", 0) or 0
+    hb = 1 if (fast_ok and FASTTRACK["min_bars_in_state"] <= 1) else hb_required
+    bis = int(c.get("bars_in_state", 0) or 0)
+    if bis < hb:
+        allow = False; reasons_accum.append(f"anti: hysteresis<{hb}")
+
+    # ATR% bounds — без змін
     lo, hi = ANTI_FALSE_OPEN.get("atr_pct_bounds", (0.0, 999.0))
     ap = c.get("atr_percent", None)
-    if allow and ap is not None and ap > 0.0:
+    if ap is not None and ap > 0.0:
         if (ap < lo) or (ap > hi):
-            allow = False; res_total["reasons"].append(f"anti: atr_out({round(float(ap),3)} not in {lo}-{hi})")
+            allow = False; reasons_accum.append(f"anti: atr_out({round(float(ap),3)} not in {lo}-{hi})")
 
-    # кворм пар (мінімальний)
+    # Bollinger width — у fast-track допускаємо стискання
+    bbw = c.get("bollinger_width", None)
+    if bbw is not None:
+        try:
+            bbw = float(bbw)
+            min_bbw = FASTTRACK["min_bb_width"] if fast_ok else MIN_BB_WIDTH
+            if bbw < min_bbw:
+                allow = False; reasons_accum.append(f"anti: bb_width<{min_bbw}")
+        except Exception:
+            pass
+
+    # кворм пар — у fast-track досить 1
     key = "min_pair_hits_long" if side == "LONG" else "min_pair_hits_short"
-    if allow and not _meets_pairs_quorum(res_total, int(ANTI_FALSE_OPEN.get(key, 0) or 0)):
-        allow = False; res_total["reasons"].append(f"anti: pairs_quorum_{side.lower()}")
+    needed_pairs = 1 if fast_ok else int(ANTI_FALSE_OPEN.get(key, 0) or 0)
+    if not _meets_pairs_quorum(res_total, needed_pairs):
+        allow = False; reasons_accum.append(f"anti: pairs_quorum_{side.lower()}<{needed_pairs}")
 
-    # блокатори глобального тренду тільки коли ґейти увімкнені
+    # блокатори за глобальним трендом — не змінюємо
     if ENFORCE_TREND_GATES and allow:
         if side == "LONG" and _blocked_by(c, BLOCK_LONG):
-            allow = False; res_total["reasons"].append("anti: long_blocked")
+            allow = False; reasons_accum.append("anti: long_blocked")
         if side == "SHORT" and _blocked_by(c, BLOCK_SHORT):
-            allow = False; res_total["reasons"].append("anti: short_blocked")
+            allow = False; reasons_accum.append("anti: short_blocked")
 
     return allow, res_total
 
@@ -527,6 +623,8 @@ def _public_payload(side: str, allow: bool, res: Dict[str, Any], c: Dict[str, An
         "evidence": {k: c.get(k) for k in ev_keys if k in c}
     }
     payload["reasons"].append(f"regime: trend={regime['is_trend']} range={regime['is_range']} hiVol={regime['is_high_vol']} loVol={regime['is_low_vol']}")
+    if res.get("fasttrack"):
+        payload["reasons"].append("applied: fasttrack")
     return payload
 
 def _score_son(side: str, c: Dict[str, Any], regime: Dict[str, Any]) -> Dict[str, Any]:
@@ -535,10 +633,8 @@ def _score_son(side: str, c: Dict[str, Any], regime: Dict[str, Any]) -> Dict[str
     else:
         res = _score_block(c, SON_SHORT_CORE, SON_SHORT_PAIRS, "SHORT", "SON")
 
-    # бонус за режим (трендовість)
     _apply_regime_bonus(side, regime, res)
 
-    # м’який proximity-скілл
     soft, m2, r2 = _son_soft_score(c, side)
     res["score"] += soft
     res["matched"].extend(m2)
@@ -549,7 +645,11 @@ def evaluate_long(raw_conditions: Dict[str, Any]) -> Dict[str, Any]:
     c = _build_derived(raw_conditions)
     regime = _detect_regime(c)
     res = _score_son("LONG", c, regime)
+
+    # стандартний поріг
     allow = res["score"] >= THRESH_LONG
+
+    # проганяємо анти-фільтри (включно з fast-track послабленнями)
     allow, res = _apply_anti_filters("LONG", c, res, allow)
     payload = _public_payload("LONG", allow, res, c, regime)
     if not payload["allow"]:
@@ -560,7 +660,9 @@ def evaluate_short(raw_conditions: Dict[str, Any]) -> Dict[str, Any]:
     c = _build_derived(raw_conditions)
     regime = _detect_regime(c)
     res = _score_son("SHORT", c, regime)
+
     allow = res["score"] >= THRESH_SHORT
+
     allow, res = _apply_anti_filters("SHORT", c, res, allow)
     payload = _public_payload("SHORT", allow, res, c, regime)
     if not payload["allow"]:

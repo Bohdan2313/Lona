@@ -1,17 +1,19 @@
 # allocator.py
 
-from typing import Dict, Any, Optional
-
+from typing import Dict, Any
+from pybit.unified_trading import HTTP
 from config import (
     MAX_ACTIVE_TRADES,
-    USE_MANUAL_BALANCE, MANUAL_BALANCE,
     SMART_AVG,
-    DESIRED_ACTIVE_TRADES,          # скільки ти ХОЧЕШ активних трейдів
+    DESIRED_ACTIVE_TRADES,          # скільки ХОЧЕМО активних трейдів
     ACCOUNT_SAFETY_BUFFER_PCT,      # напр. 0.05 = 5% загального балансу тримаємо в запасі
     ACCOUNT_MIN_FREE_USDT,          # напр. 0.0..50.0 — фіксована подушка
+    BYBIT_API_KEY, BYBIT_API_SECRET
 )
-from utils.tools import get_balance
-from utils.logger import log_error, load_active_trades
+from utils.logger import log_error, log_message, load_active_trades
+
+# Для реального балансу UNIFIED акаунту
+_bybit = HTTP(api_key=BYBIT_API_KEY, api_secret=BYBIT_API_SECRET)
 
 
 # ============================ Хелпери активних угод ============================
@@ -21,23 +23,28 @@ def get_open_trades_count() -> int:
     try:
         trades = load_active_trades() or {}
         if isinstance(trades, dict):
-            return sum(1 for t in trades.values() if not t.get("closed"))
+            return sum(1 for t in trades.values() if isinstance(t, dict) and not t.get("closed"))
         elif isinstance(trades, list):
             return sum(1 for t in trades if isinstance(t, dict) and not t.get("closed"))
     except Exception as e:
         log_error(f"[allocator] get_open_trades_count: {e}")
     return 0
 
+
 def has_open_trade_for(symbol: str) -> bool:
     """Перевіряє, чи є вже відкрита угода по символу."""
     try:
         trades = load_active_trades() or {}
         if isinstance(trades, dict):
-            return any(isinstance(rec, dict) and rec.get("symbol") == symbol and not rec.get("closed")
-                       for rec in trades.values())
+            return any(
+                isinstance(rec, dict) and rec.get("symbol") == symbol and not rec.get("closed")
+                for rec in trades.values()
+            )
         elif isinstance(trades, list):
-            return any(isinstance(rec, dict) and rec.get("symbol") == symbol and not rec.get("closed")
-                       for rec in trades)
+            return any(
+                isinstance(rec, dict) and rec.get("symbol") == symbol and not rec.get("closed")
+                for rec in trades
+            )
     except Exception as e:
         log_error(f"[allocator] has_open_trade_for: {e}")
     return False
@@ -45,15 +52,29 @@ def has_open_trade_for(symbol: str) -> bool:
 
 # ============================ Баланс / резерви ============================
 
-def get_available_balance() -> float:
-    """Повертає доступний USDT баланс з урахуванням MANUAL/реального режиму."""
+def get_unified_equity() -> float:
+    """
+    Реальний equity UNIFIED акаунту (USDT).
+    Якщо UNIFIED тимчасово 0, пробує FUNDING для діагностики.
+    """
     try:
-        if USE_MANUAL_BALANCE:
-            return float(MANUAL_BALANCE)
-        return float(get_balance() or 0.0)
-    except Exception as e:
-        log_error(f"[allocator.get_available_balance] {e}")
+        resp = _bybit.get_wallet_balance(accountType="UNIFIED")
+        eq = float(resp["result"]["list"][0].get("totalEquity", 0.0))
+        if eq > 0:
+            return eq
+        # Фолбек (для дебагу/логів): покажемо, якщо гроші зависли у FUNDING
+        try:
+            fund = _bybit.get_wallet_balance(accountType="FUND")
+            f_eq = float(fund["result"]["list"][0].get("totalWalletBalance", 0.0))
+            if f_eq > 0:
+                log_message(f"[ALLOC] UNIFIED equity=0, FUNDING balance≈{f_eq:.2f} — зроби Transfer: Funding→Unified")
+        except Exception:
+            pass
         return 0.0
+    except Exception as e:
+        log_error(f"[allocator.get_unified_equity] {e}")
+        return 0.0
+
 
 def _dca_total_needed_per_trade(cfg: Dict[str, Any]) -> float:
     """
@@ -69,14 +90,16 @@ def _dca_total_needed_per_trade(cfg: Dict[str, Any]) -> float:
         return 0.0
 
     if mode == "progressive":
-        total = 0.0
+        total_units = 0.0
         cur = 1.0
         for _ in range(max_adds + 1):
-            total += cur
+            total_units += cur
             cur *= factor
-        return base * total
+        return base * total_units
     else:
+        # equal: (старт + max_adds докупок) * однаковий крок
         return base * (1 + max_adds)
+
 
 def _account_keep_reserve(avail: float) -> float:
     """Скільки тримаємо як подушку по акаунту (pct + фікс)."""
@@ -90,6 +113,32 @@ def _account_keep_reserve(avail: float) -> float:
         fixed = 0.0
     return max(0.0, avail * pct) + max(0.0, fixed)
 
+
+def _used_margin_now() -> float:
+    """
+    Скільки маржі вже використано відкритими угодами (за даними active_trades.json).
+    Якщо нема коректних даних — повертаємо 0 (буде «верхня» консервативна модель нижче).
+    """
+    try:
+        trades = load_active_trades() or {}
+        if isinstance(trades, dict):
+            items = trades.values()
+        elif isinstance(trades, list):
+            items = trades
+        else:
+            return 0.0
+        used = 0.0
+        for rec in items:
+            if not isinstance(rec, dict) or rec.get("closed"):
+                continue
+            smart = rec.get("smart_avg", {})
+            used += float(smart.get("total_margin_used", 0.0) or 0.0)
+        return max(0.0, used)
+    except Exception as e:
+        log_error(f"[allocator._used_margin_now] {e}")
+        return 0.0
+
+
 def _max_supported_trades(avail: float, reserved_per_trade: float, keep_reserve: float) -> int:
     """
     Скільки ПОВНИХ DCA-угод може потягнути баланс з урахуванням акаунтної подушки.
@@ -100,18 +149,27 @@ def _max_supported_trades(avail: float, reserved_per_trade: float, keep_reserve:
     return int(budget_for_trades // reserved_per_trade)
 
 
+def _log_alloc_snapshot(avail, keep_reserve, reserved_full_trade, open_cnt, capacity_total, effective_limit, desired, hard_cap, used_reserved):
+    try:
+        log_message(
+            "[ALLOC] "
+            f"avail={avail:.2f}, keep={keep_reserve:.2f}, B={reserved_full_trade:.2f}, "
+            f"used={used_reserved:.2f}, open={open_cnt}, cap={capacity_total}, "
+            f"limit={effective_limit}, desired={desired}, hard_cap={hard_cap}"
+        )
+    except Exception:
+        pass
+
+
 # ============================ Головна функція ============================
 
-def plan_allocation_for_new_trade(
-    symbol: str,
-) -> Dict[str, Any]:
+def plan_allocation_for_new_trade(symbol: str) -> Dict[str, Any]:
     """
     Динамічний аллокатор:
-    - Рахує capacity за балансом (скільки ПОВНИХ DCA-угод реально тягнемо).
-    - Обмежує лімітом біржі/конфігом: MAX_ACTIVE_TRADES.
-    - Авто-зменшує бажану кількість, якщо не вистачає балансу.
-    - Дає стартову суму для 1-ї сходинки (SMART_AVG.base_margin), лише якщо вистачає
-      на повний DCA і для вже відкритих угод.
+    - Рахує capacity за реальним equity (UNIFIED).
+    - Обмежує лімітом: MAX_ACTIVE_TRADES, DESIRED_ACTIVE_TRADES.
+    - Враховує вже використану маржу відкритими угодами (active_trades.json).
+    - Дає стартову суму для 1-ї сходинки (SMART_AVG.base_margin), якщо реально вистачає на повну DCA-угоду.
     """
     try:
         # 0) Слоти та дубль-символ
@@ -128,12 +186,12 @@ def plan_allocation_for_new_trade(
                 "capacity_total": 0
             }
 
-        # 1) Баланс та параметри DCA
-        avail = float(get_available_balance())
+        # 1) Реальний баланс та параметри DCA
+        avail = float(get_unified_equity())
         if avail <= 0:
             return {
                 "allow": False,
-                "reason": "no_balance",
+                "reason": "no_balance_or_not_in_unified",
                 "amount_to_use": 0.0,
                 "reserved_per_trade": 0.0,
                 "open_trades": open_cnt,
@@ -166,6 +224,7 @@ def plan_allocation_for_new_trade(
         # 3) Якщо вже відкрито >= ефективного ліміту — нові заборонені
         if open_cnt >= effective_limit:
             reason = f"no_slots_dynamic (open={open_cnt}, limit={effective_limit}, desired={desired}, hard_cap={hard_cap}, capacity={capacity_total})"
+            _log_alloc_snapshot(avail, keep_reserve, reserved_full_trade, open_cnt, capacity_total, effective_limit, desired, hard_cap, _used_margin_now())
             return {
                 "allow": False,
                 "reason": reason,
@@ -177,14 +236,13 @@ def plan_allocation_for_new_trade(
                 "capacity_total": capacity_total
             }
 
-        # 4) Перевірка: вистачає ЛИШЕ на ще одну повну DCA-угоду прямо зараз?
-        # Резерв уже відкритих (логічна модель): open_cnt * reserved_full_trade
-        used_reserved = open_cnt * reserved_full_trade
+        # 4) Чи реально тягнемо ще ОДНУ повну DCA-угоду саме зараз?
+        used_reserved = _used_margin_now()  # фактично зайнята маржа
         must_have_for_new = used_reserved + reserved_full_trade + keep_reserve
         if avail < must_have_for_new:
-            # Теоретично capacity_total мав це вже врахувати; але якщо DESIRED/limit змінився між тиками — пояснимо явно.
             lack = must_have_for_new - avail
             reason = f"insufficient_now_for_next (need={must_have_for_new:.2f}, avail={avail:.2f}, lack={lack:.2f}, keep={keep_reserve:.2f})"
+            _log_alloc_snapshot(avail, keep_reserve, reserved_full_trade, open_cnt, capacity_total, effective_limit, desired, hard_cap, used_reserved)
             return {
                 "allow": False,
                 "reason": reason,
@@ -196,12 +254,13 @@ def plan_allocation_for_new_trade(
                 "capacity_total": capacity_total
             }
 
-        # 5) Якщо ми тут — можна відкривати ще 1 повну DCA-угоду
+        # 5) Ок — можна відкривати ще одну повну DCA-угоду
         base_margin = float(SMART_AVG.get("base_margin", 0.0))
+        _log_alloc_snapshot(avail, keep_reserve, reserved_full_trade, open_cnt, capacity_total, effective_limit, desired, hard_cap, used_reserved)
         return {
             "allow": True,
             "reason": "ok",
-            "amount_to_use": base_margin,               # стартовий бюджет (1-ша сходинка)
+            "amount_to_use": base_margin,               # стартовий крок (1-а сходинка)
             "reserved_per_trade": reserved_full_trade,  # повний резерв під DCA (для довідки)
             "open_trades": open_cnt,
             "effective_limit": effective_limit,

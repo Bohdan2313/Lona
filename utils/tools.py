@@ -452,53 +452,6 @@ def get_active_trade(trade_id: str):
 
 
 
-def is_position_open_live(symbol, side):
-  
-    """
-    📡 Перевіряє чи позиція ще відкрита:
-    ✅ Спочатку в ActiveTradesFile
-    ✅ Потім на біржі (гарантія)
-    """
-    try:
-        from utils.logger import get_active_trades
-        
-        # 🗂️ Перевірка локального ActiveTradesFile
-        active_trades = get_active_trades()
-
-        # 🔎 Якщо це dict — стара логіка
-        if isinstance(active_trades, dict):
-            trade = active_trades.get(symbol)
-            if trade and trade.get("status") == "open":
-                log_message(f"✅ is_position_open_live: знайдено {symbol} локально")
-                return True
-
-        # 🔎 Якщо це список — шукаємо по списку
-        elif isinstance(active_trades, list):
-            for trade in active_trades:
-                if not isinstance(trade, dict):
-                    log_error(f"❌ [is_position_open_live] Очікував dict, отримав: {trade}")
-                    continue
-                if trade.get("symbol") == symbol and not trade.get("closed", True):
-                    log_message(f"✅ is_position_open_live: знайдено {symbol} локально (список)")
-                    return True
-
-        # 📡 Перевірка на біржі
-        response = bybit.get_positions(category="linear", symbol=symbol.split("_")[0])
-        positions = response.get("result", {}).get("list", [])
-        for pos in positions:
-            size = float(pos.get("size", 0))
-            if size > 0:
-                pos_side = pos.get("side", "").upper()
-                if (side.upper() == "LONG" and pos_side == "BUY") or \
-                   (side.upper() == "SHORT" and pos_side == "SELL"):
-                    log_message(f"✅ is_position_open_live: знайдено {symbol} на біржі")
-                    return True
-
-        return False
-
-    except Exception as e:
-        log_error(f"❌ [is_position_open_live] Помилка для {symbol}: {e}")
-        return False
 
 
 def is_position_open_api(symbol, side, retries=3, delay=1):
@@ -554,32 +507,90 @@ def get_current_position_size(symbol, side):
         return 0.0
 
 
-def check_position_with_retry(symbol, side, retries=3, delay=2):
-    """
-    🔄 Перевіряє чи позиція відкрита з повторними спробами, щоб уникнути false positives.
-    """
-    for attempt in range(1, retries + 1):
-        if is_position_open_live(symbol, side):
-            log_message(f"✅ Позиція {symbol} знайдена на біржі (спроба {attempt})")
-            return True
-        time.sleep(delay)
-    log_message(f"❌ {symbol} позиція не знайдена після {retries} спроб")
-    return False
 
 
+# ---------- Innovation / Risky symbols helpers ----------
+import json, os
+from datetime import datetime, timezone
 
-def _at_safe_load() -> dict:
-    """Потокобезпечне читання ActiveTrades.json. Завжди повертає dict{trade_id: rec}."""
-    if not os.path.exists(ACTIVE_TRADES_FILE):
-        return {}
+def _load_json(path, default):
     try:
-        with open(ACTIVE_TRADES_FILE, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        if isinstance(data, dict):
-            return data
-        elif isinstance(data, list):
-            # страхувальний ап: конвертація зі списку у dict
-            return {t.get("trade_id", f"trade_{i}"): t for i, t in enumerate(data) if isinstance(t, dict)}
-        return {}
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
     except Exception:
-        return {}
+        return default
+
+def _save_json(path, obj):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(obj, f, ensure_ascii=False, indent=2)
+
+def _days_since_ts_ms(ts_ms):
+    if not ts_ms:
+        return None
+    try:
+        dt = datetime.fromtimestamp(int(ts_ms)/1000.0, tz=timezone.utc)
+        return (datetime.now(timezone.utc) - dt).days
+    except Exception:
+        return None
+
+def build_innovation_cache():
+    """
+    Спроба оновити кеш із Bybit instruments info (якщо client доступний).
+    Якщо ні — створимо/залишимо порожній кеш.
+    """
+    from config import INNOVATION_CACHE_FILE
+    cache = {}
+    try:
+        from config import client
+        # Unified Trading: /v5/market/instruments-info  (linear)
+        res = client.get_instruments_info(category="linear") or {}
+        items = (res.get("result") or {}).get("list") or []
+        for it in items:
+            sym = it.get("symbol")
+            if not sym:
+                continue
+            innovation = str(it.get("innovation", "0")) in {"1","true","True"}
+            list_ts = it.get("launchTime") or it.get("listTime") or it.get("createdTime")
+            try:
+                list_ts = int(list_ts)
+            except Exception:
+                list_ts = None
+            cache[sym] = {"innovation": innovation, "listing_ts": list_ts}
+    except Exception:
+        # нічого страшного — працюватимемо тільки по евристиках обороту/віку, якщо з’являться
+        cache = _load_json(INNOVATION_CACHE_FILE, {})  # не перетираємо старе
+    _save_json(INNOVATION_CACHE_FILE, cache)
+    return cache
+
+def is_innovation_or_risky_symbol(symbol: str,
+                                  turnover_24h_usd: float | None = None,
+                                  listed_days: int | None = None) -> dict:
+    """
+    Повертає прапорці ризику для символа.
+    - innovation: з кешу Bybit instruments (якщо є)
+    - young: вік лістингу < INNOVATION_MIN_LISTING_DAYS (з кешу або з аргументу listed_days)
+    - thin: 24h оборот < INNOVATION_MIN_24H_TURNOVER (якщо переданий)
+    - risky: об’єднаний прапорець (будь-який True)
+    """
+    from config import INNOVATION_CACHE_FILE, INNOVATION_MIN_LISTING_DAYS, INNOVATION_MIN_24H_TURNOVER
+    cache = _load_json(INNOVATION_CACHE_FILE, {})
+    meta = cache.get(symbol) or {}
+
+    innovation = bool(meta.get("innovation", False))
+
+    days = listed_days
+    if days is None:
+        days = _days_since_ts_ms(meta.get("listing_ts"))
+
+    young = (days is not None and days < int(INNOVATION_MIN_LISTING_DAYS))
+
+    thin = False
+    try:
+        if turnover_24h_usd is not None:
+            thin = float(turnover_24h_usd) < float(INNOVATION_MIN_24H_TURNOVER)
+    except Exception:
+        thin = False
+
+    risky = innovation or young or thin
+    return {"innovation": innovation, "young": young, "thin": thin, "risky": risky, "days_listed": days}

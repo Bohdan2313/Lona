@@ -714,10 +714,12 @@ def find_best_scalping_targets():
     - Якщо пройшла check_trade_conditions() → відкриття угоди.
     - Якщо не пройшла → додаємо в watchlist.json для моніторингу.
     - monitor_watchlist_candidate пише в logs/watchlist_debug.json кожні 5 сек.
+    - ⛔ Анти-інноваційний фільтр: Innovation/молоді/тонкі символи — скіпаємо повністю.
     """
     try:
         log_message("🚦 Старт find_best_scalping_targets()")
 
+        # ---------------- BG monitors ----------------
         if "monitor_all_open_trades" not in bg_threads:
             t = threading.Thread(target=monitor_all_open_trades, daemon=True)
             t.start()
@@ -730,7 +732,26 @@ def find_best_scalping_targets():
             bg_threads["monitor_watchlist_candidate"] = t
             log_debug("monitor_watchlist_candidate запущено")
 
+        # ---------------- Innovation cache (best-effort) ----------------
+        # Оновлюємо 1 раз на запуск. Якщо немає API/кешу — тихо ідeмо далі.
+        try:
+            from utils.tools import build_innovation_cache
+            build_innovation_cache()
+            log_debug("Innovation cache updated")
+        except Exception as _e:
+            log_debug(f"Innovation cache not updated: {_e}")
 
+        # Функції/прапори фільтра з безпечними дефолтами
+        try:
+            from config import BLOCK_INNOVATION
+            from utils.tools import is_innovation_or_risky_symbol
+        except Exception:
+            BLOCK_INNOVATION = True
+            def is_innovation_or_risky_symbol(symbol, turnover_24h_usd=None, listed_days=None):
+                # фейковий safe-стаб, нічого не блокує
+                return {"innovation": False, "young": False, "thin": False, "risky": False, "days_listed": None}
+
+        # ---------------- Universe ----------------
         symbols = get_top_symbols(limit=15)
         random.shuffle(symbols)
         log_debug(f"Монети для аналізу: {symbols}")
@@ -738,11 +759,36 @@ def find_best_scalping_targets():
         watchlist_data = load_watchlist() or []
 
         for symbol in symbols:
+            # ---------- Фільтр 1: швидка перевірка до snapshot ----------
+            # Користуємось кешем Bybit: innovation / young listing / thin turnover (якщо буде).
+            flags = is_innovation_or_risky_symbol(symbol)
+            if flags.get("risky") and BLOCK_INNOVATION:
+                log_message(f"🧯 [SKIP] {symbol}: innovation={flags.get('innovation')}, "
+                            f"young_days={flags.get('days_listed')}, thin={flags.get('thin')}")
+                continue
+
             log_message(f"🎯 Аналіз {symbol}")
+
+            # ---------- Snapshot ----------
             snapshot = build_monitor_snapshot(symbol)
             if not snapshot:
                 log_message(f"⚠️ [SKIP] {symbol} → snapshot None")
                 continue
+
+            # ---------- Фільтр 2: уточнення після snapshot (якщо з'явився turnover) ----------
+            # В snapshot/conditions часто є оборот. Якщо є — уточнюємо thin-флаг.
+            turnover_24h = (snapshot.get("turnover24hUsd")
+                            or snapshot.get("turnover_usd")
+                            or snapshot.get("turnover")  # про всяк випадок
+                            or None)
+            try:
+                flags = is_innovation_or_risky_symbol(symbol, turnover_24h_usd=turnover_24h)
+                if flags.get("risky") and BLOCK_INNOVATION:
+                    log_message(f"🧯 [SKIP] {symbol}: risky after snapshot "
+                                f"(innovation={flags.get('innovation')}, young_days={flags.get('days_listed')}, thin={flags.get('thin')})")
+                    continue
+            except Exception:
+                pass
 
             log_debug(f"Snapshot OK для {symbol}")
             conditions = convert_snapshot_to_conditions(snapshot)
@@ -1118,8 +1164,9 @@ def manage_open_trade(symbol, entry_price, side, amount, leverage, behavior_summ
     👁 Smart Averaging (DCA) моніторинг відкритої угоди — BOT-ONLY TP:
     - Без SL.
     - TP рахується від СЕРЕДНЬОЇ (avg_entry) на +tp_from_avg_pct (LONG) / -tp_from_avg_pct (SHORT)
-    - Докупки по кроку dca_step_pct від avg_entry з перерахунком середньої та пересуванням TP
-    - Ніяких прямых bybit-викликів у цьому файлі — лише OrderExecutor з executor.py
+    - Докупки: за "драбиною" (ladder) кожні dca_step_pct від попереднього рівня
+      або, опціонально, від avg ("avg") чи від entry0 компаундом ("entry0").
+    - Ніяких прямих bybit-викликів у цьому файлі — лише OrderExecutor з executor.py
     """
     log_message(f"👁 [DCA] Старт manage_open_trade для {symbol} ({side}) @ {entry_price}")
 
@@ -1141,7 +1188,7 @@ def manage_open_trade(symbol, entry_price, side, amount, leverage, behavior_summ
     dca_enabled           = bool(SMART_AVG.get("enabled", True))
     base_margin           = float(SMART_AVG.get("base_margin", float(amount or 0.0) or 100.0))
     max_adds              = int(SMART_AVG.get("max_adds", 5))
-    dca_step_pct          = float(SMART_AVG.get("dca_step_pct", 0.045))
+    dca_step_pct          = float(SMART_AVG.get("dca_step_pct", 0.045))  # 0.035 = 3.5%
     dca_mode              = str(SMART_AVG.get("dca_mode", "equal"))
     dca_factor            = float(SMART_AVG.get("dca_factor", 1.2))
     tp_from_avg_pct       = float(SMART_AVG.get("tp_from_avg_pct", 0.01))
@@ -1151,6 +1198,7 @@ def manage_open_trade(symbol, entry_price, side, amount, leverage, behavior_summ
     atr_pause_pct         = float(SMART_AVG.get("atr_pause_pct", 0.10))
     trend_flip_cut_pct    = float(SMART_AVG.get("trend_flip_cut_pct", 0.0))
     cooldown_min          = int(SMART_AVG.get("cooldown_min", 20))
+    anchor_default        = str(SMART_AVG.get("anchor", "ladder")).lower()  # "ladder" | "avg" | "entry0"
 
     # ===== Стан DCA з ActiveTrades (якщо є) =====
     smart = None
@@ -1167,6 +1215,15 @@ def manage_open_trade(symbol, entry_price, side, amount, leverage, behavior_summ
             init_qty = (float(amount) * float(leverage)) / float(entry_price)
         except Exception:
             init_qty = 0.0
+
+        # --- ініціалізація "драбини" ---
+        entry0_init = float(entry_price)
+        step_init = float(dca_step_pct)
+        if is_long:
+            ladder_next_init = entry0_init * (1.0 - step_init)
+        else:
+            ladder_next_init = entry0_init * (1.0 + step_init)
+
         smart = {
             "enabled": dca_enabled,
             "avg_entry": float(entry_price),
@@ -1185,7 +1242,12 @@ def manage_open_trade(symbol, entry_price, side, amount, leverage, behavior_summ
             "min_liq_buffer": min_liq_buffer,
             "atr_pause_pct": atr_pause_pct,
             "trend_flip_cut_pct": trend_flip_cut_pct,
-            "cooldown_min": cooldown_min
+            "cooldown_min": cooldown_min,
+
+            # --- нові ключі для "драбини" ---
+            "anchor": anchor_default,                 # "ladder" | "avg" | "entry0"
+            "entry0": entry0_init,                    # початковий вхід
+            "ladder_next_price": float(ladder_next_init)  # наступний рівень для add
         }
 
     # Локальні змінні
@@ -1196,11 +1258,16 @@ def manage_open_trade(symbol, entry_price, side, amount, leverage, behavior_summ
     tp_price = Decimal(str(smart.get("tp_price", float(avg_entry * (Decimal("1")+Decimal(str(tp_from_avg_pct)) if is_long else Decimal("1")-Decimal(str(tp_from_avg_pct)))))))
     tp_order_id = smart.get("tp_order_id")
 
+    # нові поля стану (беквард-сумісно)
+    anchor_mode = str(smart.get("anchor", anchor_default)).lower()
+    entry0 = Decimal(str(smart.get("entry0", float(entry_price))))
+    ladder_next_price = Decimal(str(smart.get("ladder_next_price", float(entry_price * (Decimal("1")-Decimal(str(dca_step_pct))) if is_long else entry_price * (Decimal("1")+Decimal(str(dca_step_pct)))))))
+
     # --- анти-спам між докупками (сек) ---
     MIN_SECONDS_BETWEEN_ADDS = int(SMART_AVG.get("min_seconds_between_adds", 45))
     _last_add_ts = 0.0
 
-    # --- захист від API-помилок, щоб не робити Manual Close по глюку ---
+    # --- захист від API-помилок ---
     _api_fail_streak = 0
 
     peak_pnl_percent = -9999.0
@@ -1216,6 +1283,10 @@ def manage_open_trade(symbol, entry_price, side, amount, leverage, behavior_summ
         smart["total_qty"] = float(total_qty)
         smart["tp_price"] = float(tp_price)
         smart["tp_order_id"] = tp_order_id
+        # нові
+        smart["anchor"] = anchor_mode
+        smart["entry0"] = float(entry0)
+        smart["ladder_next_price"] = float(ladder_next_price)
         try:
             if 'update_active_trade' in globals():
                 update_active_trade(trade_id, {"smart_avg": smart})
@@ -1225,12 +1296,35 @@ def manage_open_trade(symbol, entry_price, side, amount, leverage, behavior_summ
     def calc_tp_from_avg():
         return avg_entry * (Decimal("1")+Decimal(str(tp_from_avg_pct)) if is_long else Decimal("1")-Decimal(str(tp_from_avg_pct)))
 
+    # === Поріг докупки ===
     def next_dca_price():
-        step = Decimal(str(dca_step_pct))
-        return avg_entry * (Decimal("1")-step if is_long else Decimal("1")+step)
+        s = Decimal(str(dca_step_pct))  # 0.035 = 3.5%
+        if anchor_mode == "avg":
+            return avg_entry * (Decimal("1")-s if is_long else Decimal("1")+s)
+        elif anchor_mode == "entry0":
+            # компаунд від першого входу: entry0 * (1±s)^(adds_done+1)
+            power = Decimal(str(adds_done + 1))
+            factor = (Decimal("1")-s) if is_long else (Decimal("1")+s)
+            return entry0 * (factor ** power)
+        else:
+            # "ladder" — від попереднього рівня, що зберігаємо у стані
+            return ladder_next_price
 
     def price_ok_for_dca(cur):
-        return (cur <= next_dca_price()) if is_long else (cur >= next_dca_price())
+        target = next_dca_price()
+        return (cur <= target) if is_long else (cur >= target)
+
+    # === PNL та TP-верифікація перед закриттям ===
+    def _get_taker_fee_rate():
+        return 0.0006  # ≈0.06% Bybit Taker
+
+    def compute_break_even_with_fees(avg_entry_d: Decimal) -> Decimal:
+        fee = _get_taker_fee_rate()
+        be = float(avg_entry_d) * (1.0 + fee * 2.0 + 1e-4)
+        return Decimal(str(be))
+
+    def get_safe_price(symbol_str: str) -> Decimal:
+        return Decimal(str(get_current_futures_price(symbol_str)))
 
     def finalize_trade(reason, final_price):
         nonlocal peak_pnl_percent, worst_pnl_percent, trade_closed, total_qty
@@ -1239,21 +1333,23 @@ def manage_open_trade(symbol, entry_price, side, amount, leverage, behavior_summ
             log_debug(f"⏭ finalize_trade вже викликано раніше для {symbol_clean} → скіп")
             return
 
-        pnl = ((final_price - avg_entry) / avg_entry)
-        if not is_long:
-            pnl *= -1
-        pnl_percent = float(pnl * Decimal(str(leverage)) * Decimal("100"))
+        be = compute_break_even_with_fees(avg_entry)
+        if is_long:
+            pnl_ratio = (Decimal(str(final_price)) - be) / be
+        else:
+            pnl_ratio = (be - Decimal(str(final_price))) / be
+        pnl_percent = float(pnl_ratio * Decimal(str(leverage)) * Decimal("100"))
+
         duration_seconds = (datetime.now() - entry_time).total_seconds()
         duration_str = str(timedelta(seconds=int(duration_seconds)))
         result = "WIN" if pnl_percent > 0 else "LOSS" if pnl_percent < 0 else "BREAKEVEN"
 
-        # Закриття ВСІЄЇ позиції через OrderExecutor (market reduceOnly)
         executor = OrderExecutor(
             symbol=symbol_clean,
             side=("Sell" if is_long else "Buy"),
             position_side=side,
             leverage=leverage,
-            amount_to_use=0.0,          # ← обов’язково
+            amount_to_use=0.0,
             bypass_price_check=True
         )
         closed_ok = False
@@ -1321,12 +1417,11 @@ def manage_open_trade(symbol, entry_price, side, amount, leverage, behavior_summ
         except Exception as e:
             log_error(f"⚠️ Не вдалося оновити ActiveTrades для {trade_id}: {e}")
 
-    # ===== Початковий TP — ТІЛЬКИ лог (на біржу не штовхаємо, якщо USE_EXCHANGE_TP=False) =====
+    # ===== Початковий TP — ТІЛЬКИ лог =====
     if not tp_order_id:
         try:
             tp_price = calc_tp_from_avg()
             if USE_EXCHANGE_TP and 'place_or_update_tp' in globals() and float(total_qty) > 0:
-                # якщо колись захочеш — можна увімкнути прапорець у config.py
                 tp_order_id = place_or_update_tp(
                     symbol=symbol_clean,
                     side=side,
@@ -1346,7 +1441,7 @@ def manage_open_trade(symbol, entry_price, side, amount, leverage, behavior_summ
         while True:
             current_price = Decimal(str(get_current_futures_price(symbol_clean)))
 
-            # 🌐 Перевірка позиції з толерантністю до API-помилок
+            # 🌐 Перевірка позиції
             exists = None
             try:
                 exists = check_position_with_retry(symbol_clean, side, retries=3, delay=2)
@@ -1354,7 +1449,6 @@ def manage_open_trade(symbol, entry_price, side, amount, leverage, behavior_summ
                 exists = None
                 log_error(f"[DCA] check_position error for {symbol_clean}: {type(_chk_err).__name__}: {_chk_err}")
 
-            # Якщо стан невідомий (API впав) — НЕ закривати, просто пауза і далі
             if exists is None:
                 _api_fail_streak += 1
                 if _api_fail_streak >= 3:
@@ -1364,7 +1458,6 @@ def manage_open_trade(symbol, entry_price, side, amount, leverage, behavior_summ
             else:
                 _api_fail_streak = 0
 
-            # Якщо точно немає відкритої позиції → вихід без форс-закриття/Manual Close
             if exists is False:
                 log_message(f"ℹ️ [DCA] Позиція {symbol_clean} відсутня (0 qty) → вихід з моніторингу без закриття.")
                 break
@@ -1381,54 +1474,71 @@ def manage_open_trade(symbol, entry_price, side, amount, leverage, behavior_summ
                 worst_pnl_percent = pnl_percent
 
             log_message(
-                f"📡 [DCA] {symbol_clean} Ціна: {current_price}, PnL(avg): {round(pnl_percent, 2)}% "
+                f"📡 [DCA] {symbol_clean} Px: {current_price}, PnL(avg): {round(pnl_percent, 2)}% "
                 f"(Peak: {round(peak_pnl_percent, 2)}%, Worst: {round(worst_pnl_percent, 2)}%) "
                 f"| avg={float(avg_entry):.6f}, adds={adds_done}/{max_adds}"
             )
 
-            # ====== BOT-ONLY TP з ε-допуском ======
+            # діагностика порогу докупки
+            need_px = next_dca_price()
+            log_message(f"[DCA] need {'<=' if is_long else '>='} {float(need_px):.6f}; cur={float(current_price):.6f}; "
+                        f"anchor={anchor_mode}; step={dca_step_pct*100:.2f}%; adds={adds_done}/{max_adds}")
+
+            # ====== BOT-ONLY TP з ε-допуском + верифікація PnL ======
             tp_price = calc_tp_from_avg()
             eps = Decimal(str(TP_EPSILON))
-            hit_tp = (
-                (is_long  and current_price >= (tp_price * (Decimal("1") - eps))) or
-                ((not is_long) and current_price <= (tp_price * (Decimal("1") + eps)))
-            )
+            hit_tp = ((is_long and current_price >= (tp_price * (Decimal("1") - eps)))
+                      or ((not is_long) and current_price <= (tp_price * (Decimal("1") + eps))))
             if hit_tp:
-                log_message(f"⚑ [HIT_TP] {symbol_clean} {side}: {float(current_price):.6f} vs TP {float(tp_price):.6f}")
-                finalize_trade("Take Profit (soft)", current_price)
+                px1 = get_safe_price(symbol_clean)
+                time.sleep(0.5)
+                px2 = get_safe_price(symbol_clean)
+                cond_second = ((is_long and px2 >= tp_price) or ((not is_long) and px2 <= tp_price))
+                if not cond_second:
+                    log_message(f"⏸ [TP-VERIFY] {symbol_clean} умова не підтверджена вдруге: {float(px1):.6f}->{float(px2):.6f} vs TP {float(tp_price):.6f}")
+                    time.sleep(check_interval); continue
+
+                be = compute_break_even_with_fees(avg_entry)
+                px_eff = px2
+                pnl_ratio = ((px_eff - be) / be) if is_long else ((be - px_eff) / be)
+                pnl_percent_est = float(pnl_ratio * Decimal(str(leverage)) * Decimal("100"))
+                if pnl_percent_est <= 0.0:
+                    log_message(f"⏸ [TP-VERIFY] {symbol_clean} очікуваний PnL≤0 ({pnl_percent_est:.2f}%) → не закриваємо як TP")
+                    time.sleep(check_interval); continue
+
+                log_message(f"✅ [TP-VERIFY] {symbol_clean} TP підтверджено: px={float(px_eff):.6f} vs TP={float(tp_price):.6f} | estPnL={pnl_percent_est:.2f}%")
+                finalize_trade("Take Profit (verified)", px_eff)
                 break
 
             # ====== DCA: докупка ======
             if dca_enabled and adds_done < max_adds and price_ok_for_dca(current_price):
-                # пауза між докупками (анти-спам)
+                # кулдаун між докупками
                 now_ts = time.time()
                 if now_ts - _last_add_ts < MIN_SECONDS_BETWEEN_ADDS:
                     log_debug(f"[DCA] skip add: {now_ts - _last_add_ts:.1f}s < {MIN_SECONDS_BETWEEN_ADDS}s")
-                    time.sleep(check_interval)
-                    continue
+                    time.sleep(check_interval); continue
 
+                # ATR-пауза
                 if atr_pause_pct > 0:
                     try:
                         snapshot = build_monitor_snapshot(symbol_clean)
                         cond = convert_snapshot_to_conditions(snapshot) if snapshot else {}
                         atrp = float(cond.get("atr_percent") or 0.0)
                         if atrp and atrp >= (atr_pause_pct * 100.0):
-                            log_message(f"⏸ [DCA] ATR%={atrp:.2f} вище порогу ({atr_pause_pct*100:.0f}%) → пауза докупки")
-                            time.sleep(check_interval)
-                            continue
+                            log_message(f"⏸ [DCA] ATR%={atrp:.2f} ≥ {atr_pause_pct*100:.0f}% → пауза докупки")
+                            time.sleep(check_interval); continue
                     except Exception:
                         pass
 
-                # Розмір додатку в маржі
+                # Розмір додатку
                 add_margin = base_margin * (dca_factor ** adds_done) if dca_mode == "progressive" else base_margin
 
-                # Ліміт маржі
+                # Стеля маржі
                 if (total_margin_used + add_margin) > max_margin_per_trade:
                     log_message(f"🛑 [DCA] max_margin_per_trade досягнуто ({total_margin_used + add_margin:.2f} > {max_margin_per_trade:.2f}) → докупка скасована")
-                    time.sleep(check_interval)
-                    continue
+                    time.sleep(check_interval); continue
 
-                # Буфер до ліквідації (якщо є util)
+                # Буфер до ліквідації
                 can_add = True
                 if min_liq_buffer > 0 and 'has_liq_buffer_after_add' in globals():
                     try:
@@ -1438,10 +1548,9 @@ def manage_open_trade(symbol, entry_price, side, amount, leverage, behavior_summ
                         can_add = True
                 if not can_add:
                     log_message(f"🛑 [DCA] Недостатній буфер до ліквідації → докупка скасована")
-                    time.sleep(check_interval)
-                    continue
+                    time.sleep(check_interval); continue
 
-                # Надсилаємо докупку через OrderExecutor
+                # Відправляємо докупку
                 executor = OrderExecutor(
                     symbol=symbol_clean,
                     side=("Buy" if is_long else "Sell"),
@@ -1464,8 +1573,7 @@ def manage_open_trade(symbol, entry_price, side, amount, leverage, behavior_summ
 
                 if not ok:
                     log_message(f"⚠️ [DCA] Докупка не пройшла для {symbol_clean}")
-                    time.sleep(check_interval)
-                    continue
+                    time.sleep(check_interval); continue
 
                 # Перерахунок середньої
                 prev_qty = total_qty
@@ -1473,14 +1581,19 @@ def manage_open_trade(symbol, entry_price, side, amount, leverage, behavior_summ
                 total_qty = prev_qty + filled_qty
                 if total_qty <= 0:
                     log_error(f"❌ [DCA] Аномалія total_qty <= 0 після докупки")
-                    time.sleep(check_interval)
-                    continue
+                    time.sleep(check_interval); continue
                 avg_entry = Decimal(str((prev_avg * prev_qty + fill_price * filled_qty) / total_qty))
                 total_margin_used += float(add_margin)
                 adds_done += 1
                 _last_add_ts = now_ts
 
-                # Оновлене планове TP (на біржу — лише за бажанням прапорця)
+                # Зрушуємо "драбину" на наступний рівень
+                s = Decimal(str(dca_step_pct))
+                if anchor_mode == "ladder":
+                    ladder_next_price = ladder_next_price * ((Decimal("1") - s) if is_long else (Decimal("1") + s))
+                # для "entry0" рівень рахується по adds_done, для "avg" — нічого не треба
+
+                # Оновлене TP
                 tp_price = calc_tp_from_avg()
                 if USE_EXCHANGE_TP and 'place_or_update_tp' in globals():
                     try:
@@ -1504,7 +1617,8 @@ def manage_open_trade(symbol, entry_price, side, amount, leverage, behavior_summ
                     f"Сходинка: {adds_done}/{max_adds}\n"
                     f"Fill: {fill_price}\n"
                     f"Нова середня: {float(avg_entry):.6f}\n"
-                    f"Новий TP: {float(tp_price):.6f}"
+                    f"Новий TP: {float(tp_price):.6f}\n"
+                    f"🎯 Наступний рівень: {float(next_dca_price()):.6f} (anchor={anchor_mode})"
                 )
 
             # ===== Опційний cut при розвороті тренду (частковий) =====
@@ -1525,7 +1639,6 @@ def manage_open_trade(symbol, entry_price, side, amount, leverage, behavior_summ
                                 amount_to_use=0.0,
                                 bypass_price_check=True
                             )
-                            # часткове закриття лише якщо така функція є в executor.py
                             if hasattr(ex, "close_position_qty"):
                                 ok_cut = bool(ex.close_position_qty(cut_qty))
                                 if ok_cut:
@@ -1551,6 +1664,7 @@ def manage_open_trade(symbol, entry_price, side, amount, leverage, behavior_summ
 
     except Exception as e:
         log_error(f"❌ [manage_open_trade] Помилка: {e}")
+
 
 
 def adjust_risk_by_volatility(symbol, base_leverage=50):

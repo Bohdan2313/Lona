@@ -594,3 +594,31 @@ def is_innovation_or_risky_symbol(symbol: str,
 
     risky = innovation or young or thin
     return {"innovation": innovation, "young": young, "thin": thin, "risky": risky, "days_listed": days}
+
+
+ACTIVE_TRADES_FILE_SIMPLE = "data/ActiveTradesSimple.json"
+
+
+def get_open_trades_count_by_side(position_side: str, retries: int = 2, delay_sec: float = 0.3) -> int:
+    """
+    📊 Повертає кількість відкритих угод за напрямком LONG або SHORT
+    🔁 Перевіряє 2 рази (із затримкою), щоб переконатись, якщо файл оновлюється.
+    """
+    position_side = position_side.upper()
+    
+    for attempt in range(retries):
+        try:
+            with open(ACTIVE_TRADES_FILE_SIMPLE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+
+            if not isinstance(data, dict):
+                raise ValueError("Формат ActiveTradesSimple некоректний (очікував dict)")
+
+            count = sum(1 for trade in data.values() if str(trade.get("side", "")).upper() == position_side)
+            return count
+
+        except Exception as e:
+            log_error(f"[get_open_trades_count_by_side] Спроба {attempt + 1}: {e}")
+            time.sleep(delay_sec)
+
+    return 0  # fallback, якщо нічого не вдалось прочитати

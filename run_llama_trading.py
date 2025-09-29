@@ -3,7 +3,6 @@
 import time
 from datetime import datetime
 from trading.scalping import find_best_scalping_targets
-
 from utils.logger import log_message, log_error
 import json
 import os
@@ -35,22 +34,18 @@ def run_llama_trading_pipeline():
     """
     log_message("🚦 [DEBUG] Старт LLaMA Trading Pipeline")
 
-    # 🧵 Запускаємо моніторинг відкритих угод у фоновому потоці (один раз)
+    # 🧵 Моніторинг відкритих угод
     if "monitor_all_open_trades" not in bg_threads:
         t = threading.Thread(target=monitor_all_open_trades, daemon=True)
         t.start()
         bg_threads["monitor_all_open_trades"] = t
         log_message("🧵 [DEBUG] monitor_all_open_trades запущено у фоні")
 
-        # 🧼 Одноразова звірка і зачистка ActiveTrades.json
-        reconcile_active_trades_with_exchange() 
-
+        reconcile_active_trades_with_exchange()  # 🧼 Синхронізація з біржею
     else:
         log_message("🧵 [DEBUG] monitor_all_open_trades вже працює — пропускаємо старт")
 
-        
-
-    # 👁 Запуск моніторингу монет біля підтримки з Watchlist (один раз)
+    # 👁 Моніторинг монет з watchlist
     if "monitor_watchlist_candidate" not in bg_threads:
         log_message("👁 [DEBUG] Старт monitor_watchlist_candidate у фоні")
         t = threading.Thread(target=monitor_watchlist_candidate, daemon=True)
@@ -60,9 +55,11 @@ def run_llama_trading_pipeline():
         log_message("👁 [DEBUG] monitor_watchlist_candidate вже працює — пропускаємо старт")
 
     log_message("🔄 [DEBUG] Вхід у головний цикл while True")
+
     while True:
         try:
             reconcile_active_trades_with_exchange()
+
             active_trades = get_active_trades()
             active_count = len(active_trades)
             log_message(f"📦 [DEBUG] Завантажено активних угод: {active_count}")
@@ -82,7 +79,9 @@ def run_llama_trading_pipeline():
         log_message(f"⏳ [DEBUG] Пауза перед новим циклом: {TRADING_CYCLE_PAUSE} сек")
         time.sleep(TRADING_CYCLE_PAUSE)
 
-# Стартуємо пайплайн тільки якщо файл запускається напряму (не при імпорті)
+# Старт тільки при прямому запуску
 if __name__ == "__main__":
     log_message("✅ MAIN ЗАПУЩЕНО")
     run_llama_trading_pipeline()
+
+

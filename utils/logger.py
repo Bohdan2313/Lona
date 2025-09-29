@@ -10,6 +10,7 @@ from config import bybit
 from config import ACTIVE_TRADES_FILE,MAX_ACTIVE_TRADES
 import tempfile
 from threading import Lock
+import threading
 
 
 
@@ -91,21 +92,36 @@ def sanitize_signals(signals: dict) -> dict:
 DEBUG_LOG_PATH = os.path.join(LOGS_DIR, "debug.log")
 DEBUG_KEYWORDS = ["[DEBUG]", "[TRACE]", "[WATCHLIST]", "[SKIP]"]
 
+MAX_LOG_LINES = 1000
+
+MAX_LINES_IN_LOG = 1000  # максимум рядків у лог-файлі
 
 def _write_log(path: str, message: str):
-    with open(path, "a", encoding="utf-8") as f:
-        f.write(message + "\n")
+    try:
+        # Читаємо існуючі рядки (захищено)
+        lines = []
+        if os.path.exists(path):
+            with open(path, "r", encoding="utf-8", errors="ignore") as f:
+                lines = f.readlines()
 
+        # Якщо перевищено ліміт — обрізаємо
+        if len(lines) >= MAX_LINES_IN_LOG:
+            lines = lines[-MAX_LINES_IN_LOG // 2:]  # залишаємо останні 500 рядків
+
+        # Додаємо новий рядок
+        lines.append(message + "\n")
+
+        # Записуємо все назад
+        with open(path, "w", encoding="utf-8") as f:
+            f.writelines(lines)
+
+    except Exception as e:
+        print(f"❌ [_write_log] Помилка: {e}")
 
 def log_debug(msg: str):
-    """Записує службові повідомлення у debug.log без виводу в термінал."""
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     full_msg = f"{timestamp} | {msg}"
-    try:
-        _write_log(DEBUG_LOG_PATH, full_msg)
-    except Exception as e:
-        print(f"❌ [log_debug] Помилка: {e}")
-
+    _write_log(DEBUG_LOG_PATH, full_msg)
 
 def log_message(msg: str):
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -122,12 +138,8 @@ def log_message(msg: str):
 def log_error(error_msg: str):
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     full_msg = f"{timestamp} | ❌ ERROR: {error_msg}"
-    try:
-        with open(ANALYTICS_LOG_PATH, "a", encoding="utf-8") as f:
-            f.write(full_msg + "\n")
-        print(f"🚨 {full_msg}")
-    except Exception as e:
-        print(f"❌ [log_error] Помилка: {e}")
+    _write_log(ANALYTICS_LOG_PATH, full_msg)
+    print(f"🚨 {full_msg}")
 
 def log_trade_result(symbol, side, entry_price, exit_price, quantity, result_type="TP", leverage=1):
     try:
@@ -143,8 +155,7 @@ def log_trade_result(symbol, side, entry_price, exit_price, quantity, result_typ
             f"PnL: {pnl:.2f} USDT ({pnl_percent:.2f}%) | Leverage: {leverage}"
         )
 
-        with open(ANALYTICS_LOG_PATH, "a", encoding="utf-8") as f:
-            f.write(log_line + "\n")
+        _write_log(ANALYTICS_LOG_PATH, log_line)
         log_message(f"📊 {log_line}")
 
     except Exception as e:
@@ -153,8 +164,7 @@ def log_trade_result(symbol, side, entry_price, exit_price, quantity, result_typ
 def log_lona_thought(symbol, thought):
     try:
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        with open(LONA_MIND_LOG_PATH, "a", encoding="utf-8") as f:
-            f.write(f"[{timestamp}] [{symbol}] {thought}\n\n")
+        _write_log(LONA_MIND_LOG_PATH, f"[{timestamp}] [{symbol}] {thought}\n")
         log_message(f"🧠 [{symbol}] {thought}")
     except Exception as e:
         log_error(f"❌ [log_lona_thought] Помилка: {e}")
@@ -166,11 +176,9 @@ def log_scalping_trade(symbol, entry_price, exit_price, side, pnl, reason):
             f"[{now}] {symbol} | {side} | Вхід: {entry_price} | Вихід: {exit_price} | "
             f"PnL: {round(pnl, 2)}% | Причина закриття: {reason}"
         )
-        with open(SCALPING_LOG_PATH, "a", encoding="utf-8") as f:
-            f.write(message + "\n")
+        _write_log(SCALPING_LOG_PATH, message)
         log_message(f"📄 {message}")
 
-        # Якщо збиток — додаємо до blacklist
         if pnl < 0:
             blacklist = {}
             if os.path.exists(BLACKLIST_PATH):
@@ -188,20 +196,18 @@ def log_scalping_trade(symbol, entry_price, exit_price, side, pnl, reason):
 
 def save_scalping_analysis(message):
     try:
-        with open(SCALPING_ANALYSIS_PATH, "a", encoding="utf-8") as f:
-            f.write(f"{message}\n")
+        _write_log(SCALPING_ANALYSIS_PATH, message)
         log_message("📋 Scalping Analysis записано.")
     except Exception as e:
         log_error(f"❌ [save_scalping_analysis] Помилка: {e}")
 
 def log_gpt_query(prompt, response):
     try:
-        with open(GPT_QUERIES_LOG_PATH, "a", encoding="utf-8") as f:
-            f.write(f"=== PROMPT ===\n{prompt}\n=== RESPONSE ===\n{response}\n\n")
+        full_entry = f"=== PROMPT ===\n{prompt}\n=== RESPONSE ===\n{response}\n"
+        _write_log(GPT_QUERIES_LOG_PATH, full_entry)
         log_message("📄 GPT запит записано.")
     except Exception as e:
         log_error(f"❌ [log_gpt_query] Помилка: {e}")
-
 
 
 def log_erx_decision(symbol, reason, blocked=True):
@@ -599,3 +605,5 @@ def _at_safe_load() -> dict:
         return {}
     except Exception:
         return {}
+
+

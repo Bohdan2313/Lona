@@ -125,17 +125,21 @@ def get_current_price(symbol):
         return None
 
 
-
-def get_top_symbols(min_volume=1_000_000, limit=60):
+def get_top_symbols(min_volume=None, limit=None):
     """
-    Топ USDT-перпів Bybit:
-    - сортує за turnover24h (USD), з tie-breaker за |price24hPcnt| та openInterestValue
-    - гарантує донабір до `limit`, навіть якщо `min_volume` відсіяв забагато
-    - легкий кеш на 5 хв, щоб не ловити rate-limit
+    Отримує топ USDT-перпетів з Bybit, з підтримкою кастомного конфігу:
+    - min_volume: мінімальний 24h обіг (USD)
+    - limit: скільки символів повернути
     """
     import time
+    from config import GET_TOP_SYMBOLS_CONFIG
+    from utils.logger import log_error
 
-    # простий кеш у процесі
+    # Витягуємо з конфігу, якщо не передано
+    min_volume = min_volume if min_volume is not None else GET_TOP_SYMBOLS_CONFIG.get("min_volume", 1_000_000)
+    limit = limit if limit is not None else GET_TOP_SYMBOLS_CONFIG.get("limit", 15)
+
+    # Примітивний кеш на рівні процесу
     global _TOP_CACHE
     try:
         _TOP_CACHE
@@ -144,56 +148,60 @@ def get_top_symbols(min_volume=1_000_000, limit=60):
 
     try:
         now = time.time()
-        # 5 хвилин кешу достатньо для вотчліста
-        if _TOP_CACHE["data"] and (now - _TOP_CACHE["ts"] < 300):
+        if _TOP_CACHE["data"] and (now - _TOP_CACHE["ts"] < 300):  # 5 хв кеш
             syms = _TOP_CACHE["data"]
         else:
+            from config import client  # або імпортуй клієнт звідти, де він в тебе
             resp = client.get_tickers(category="linear")
             if not resp or "result" not in resp or "list" not in resp["result"]:
-                log_error("❌ Не вдалося отримати список монет із Bybit")
+                log_error("❌ Не вдалося отримати tickers з Bybit")
                 return []
 
             rows = resp["result"]["list"]
             syms = []
             for it in rows:
-                sym = it.get("symbol")
-                if not sym or not sym.endswith("USDT"):
+                symbol = it.get("symbol")
+                if not symbol or not symbol.endswith("USDT"):
                     continue
 
-                # безпечні флоути
-                def f(x, default=0.0):
+                def safe_float(x, default=0.0):
                     try:
                         v = float(x)
-                        # захист від nan/inf
-                        return v if (v == v and abs(v) != float('inf')) else default
-                    except Exception:
+                        return v if v == v and abs(v) != float("inf") else default
+                    except:
                         return default
 
-                turnover = f(it.get("turnover24h"), 0.0)
-                chg_pct = abs(f(it.get("price24hPcnt"), 0.0))  # абсолютний % руху
-                oi_val   = f(it.get("openInterestValue"), 0.0)
+                turnover = safe_float(it.get("turnover24h"))
+                chg_pct = abs(safe_float(it.get("price24hPcnt")))
+                oi_val = safe_float(it.get("openInterestValue"))
 
-                syms.append({"symbol": sym, "turnover": turnover, "abs_chg": chg_pct, "oi": oi_val})
+                syms.append({
+                    "symbol": symbol,
+                    "turnover": turnover,
+                    "abs_chg": chg_pct,
+                    "oi": oi_val
+                })
 
-            # головне сортування — оборот, потім рух, потім OI
+            # Сортування за: обсяг → % зміни → OI
             syms.sort(key=lambda x: (x["turnover"], x["abs_chg"], x["oi"]), reverse=True)
 
             _TOP_CACHE["data"] = syms
             _TOP_CACHE["ts"] = now
 
-        # жорсткий фільтр за обігом
-        hi = [s["symbol"] for s in syms if s["turnover"] >= float(min_volume)]
+        # Фільтр за обігом
+        filtered = [s["symbol"] for s in syms if s["turnover"] >= float(min_volume)]
 
-        # якщо не вистачає, добираємо з решти, щоб було рівно `limit`
-        if len(hi) < limit:
-            rest = [s["symbol"] for s in syms if s["symbol"] not in hi]
-            hi.extend(rest[: max(0, limit - len(hi))])
+        # Якщо недостатньо — добрати до limit
+        if len(filtered) < limit:
+            rest = [s["symbol"] for s in syms if s["symbol"] not in filtered]
+            filtered.extend(rest[: max(0, limit - len(filtered))])
 
-        return hi[:limit]
+        return filtered[:limit]
 
     except Exception as e:
-        log_error(f"❌ get_top_symbols помилка: {e}")
+        log_error(f"❌ [get_top_symbols] Помилка: {e}")
         return []
+
 
 
 import time

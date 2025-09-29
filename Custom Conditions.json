@@ -1,0 +1,84 @@
+{
+  "mode": "CUSTOM",  
+  "long": {
+    "core": [
+      ["macd_crossed", "bullish_cross"],
+      ["macd_hist_direction", "up"],
+      ["rsi_trend", "up"],
+      ["microtrend_5m", "bullish"]
+    ],
+    "pairs": [
+      [["support_position", "near_support"], ["microtrend_1m", "bullish"]],
+      [["support_position", "near_support"], ["boll_bucket", "<=30"]],
+      [["boll_bucket", "<=30"], ["rsi_bucket", "<=30"]],
+      [["pat_hammer", "yes"], ["rsi_trend", "up"]],
+      [["pat_bullish_engulfing", "yes"], ["rsi_trend", "up"]],
+      [["volume_category", "high"], ["rsi_trend", "up"]],
+      [["volume_category", "very_high"], ["rsi_trend", "up"]],
+      [["microtrend_1m", "bullish"], ["microtrend_5m", "bullish"]]
+    ],
+    "threshold": 9.5,
+    "anti_filters": {
+      "require_closed_candle": true,
+      "hysteresis_bars": 1,
+      "min_pair_hits": 2,
+      "atr_bounds": [0.35, 7.0],
+      "bollinger_width_min": 0.35,
+      "exclusive_blockers": true
+    }
+  },
+  "short": {
+    "core": [
+      ["macd_crossed", "bearish_cross"],
+      ["macd_hist_direction", "down"],
+      ["rsi_trend", "down"],
+      ["microtrend_5m", "bearish"]
+    ],
+    "pairs": [
+      [["support_position", "near_resistance"], ["microtrend_1m", "bearish"]],
+      [["support_position", "near_resistance"], ["boll_bucket", ">70"]],
+      [["boll_bucket", ">70"], ["rsi_bucket", ">70"]],
+      [["pat_shooting_star", "yes"], ["rsi_trend", "down"]],
+      [["pat_bearish_engulfing", "yes"], ["rsi_trend", "down"]],
+      [["volume_category", "high"], ["rsi_trend", "down"]],
+      [["volume_category", "very_high"], ["rsi_trend", "down"]],
+      [["microtrend_1m", "bearish"], ["microtrend_5m", "bearish"]]
+    ],
+    "threshold": 9.5,
+    "anti_filters": {
+      "require_closed_candle": true,
+      "hysteresis_bars": 1,
+      "min_pair_hits": 2,
+      "atr_bounds": [0.35, 7.0],
+      "bollinger_width_min": 0.35,
+      "exclusive_blockers": true
+    }
+  },
+  "fasttrack": {
+    "enable": true,
+    "min_cores": 2,
+    "min_pairs": 1,
+    "min_bars_in_state": 1,
+    "allow_open_candle": true,
+    "min_bb_width": 0.003,
+    "prox_hi": 0.98,
+    "prox_lo": 0.98
+  },
+  "regime_bonus": 0.8,
+  "weights": {
+    "core": 3.5,
+    "pair": 1.6
+  },
+  "decision_delta": 0.5,
+  "trend_alignment": {
+    "enabled": false,
+    "align_with_global": false,
+    "align_with_micro5": false,
+    "allow_flat_as_neutral": true,
+    "bullish_block_levels": ["strong_bullish"],
+    "bearish_block_levels": ["strong_bearish"],
+    "micro_bullish_levels": ["strong_bullish"],
+    "micro_bearish_levels": ["strong_bearish"]
+  },
+  "fallback": "default"  
+}

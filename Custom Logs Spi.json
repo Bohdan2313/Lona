@@ -1,0 +1,53 @@
+{
+  "logging": {
+    "enabled": true,
+    "rejection_log_path": "logs/rejections.jsonl",
+    "max_rejections": 1000,
+    "only_closed_candle": true,
+    "log_to_dashboard": true,
+    "log_to_telegram": false
+  },
+  "rejection_log_fields": {
+    "include_keys": [
+      "symbol",
+      "side",
+      "score",
+      "reason_summary",
+      "matched",
+      "support_position",
+      "global_trend",
+      "volume_category",
+      "macd_hist_direction",
+      "macd_crossed",
+      "rsi_trend",
+      "rsi_bucket",
+      "boll_bucket",
+      "stoch_k_bucket",
+      "stoch_d_bucket",
+      "microtrend_1m",
+      "microtrend_5m",
+      "atr_percent",
+      "bars_in_state",
+      "bar_closed",
+      "proximity_to_high",
+      "proximity_to_low",
+      "bollinger_width"
+    ]
+  },
+  "telegram_log_fields": {
+    "enabled": true,
+    "min_score": 8.5,
+    "max_reason_length": 2,
+    "fields": [
+      "symbol",
+      "side",
+      "score",
+      "reason_summary",
+      "support_position",
+      "rsi_trend",
+      "rsi_bucket",
+      "macd_hist_direction",
+      "macd_crossed"
+    ]
+  }
+}

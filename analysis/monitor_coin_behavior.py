@@ -9,7 +9,7 @@ from analysis.indicators import (
     get_volatility,
     detect_candlestick_patterns
 )
-from analysis.whales import get_whale_score
+
 from analysis.sentiment import get_news_sentiment
 from utils.tools import get_price_change
 import time
@@ -23,8 +23,6 @@ import pandas as pd
 
 from analysis.indicators import get_micro_trend_5m
 
-
-from predict_lstm import predict_lstm
 from analysis.indicators import analyze_cci
 from analysis.indicators import detect_rsi_divergence
 from analysis.market import analyze_global_trend,analyze_market
@@ -71,7 +69,6 @@ def build_monitor_snapshot(symbol):
         microtrend_1m_data  = safe_analyze(get_micro_trend_1m, symbol) or {}
         microtrend_5m_data  = safe_analyze(get_micro_trend_5m, symbol) or {}
         volume_data         = safe_analyze(analyze_volume, symbol) or {}
-        whale_score_data    = safe_analyze(get_whale_score, symbol, 50) or {}
         global_trend_data   = analyze_global_trend() or {}
         news_data           = get_news_trend_summary() or {"news_summary": "UNKNOWN"}
 
@@ -93,12 +90,11 @@ def build_monitor_snapshot(symbol):
         macd_trend   = _macd.get("trend", "neutral")
         rsi_signal   = _rsi.get("signal", "neutral")
         trend_dir    = market_trend_data.get("trend", "neutral")
-        whale_score  = whale_score_data.get("whale_score", {}).get("score", 0.0)
         volume_level = volume_data.get("volume_analysis", {}).get("level", "unknown")
 
         log_message(
             f"🔎 {symbol} | Trend: {trend_dir} | MACD: {macd_trend} | "
-            f"RSI: {rsi_signal} | Whale: {whale_score} | Volume: {volume_level}"
+            f"RSI: {rsi_signal} | Volume: {volume_level}"
         )
 
         # === Додаткові дані ===
@@ -107,7 +103,6 @@ def build_monitor_snapshot(symbol):
         delta_1m    = round(get_price_change(symbol, 1) or 0.0, 2)
         delta_5m    = round(get_price_change(symbol, 5) or 0.0, 2)
         sentiment   = get_news_sentiment(symbol) or "neutral"
-        lstm_pred   = predict_lstm(symbol) or "neutral"
         price_trail = get_recent_price_trail(symbol, minutes=3) or []
 
         # === bars_in_state з price_trail (без нових залежностей)
@@ -170,14 +165,12 @@ def build_monitor_snapshot(symbol):
             "timestamp": int(datetime.datetime.utcnow().timestamp() * 1000),
             "price": price,
             "support_position": _sr.get("position", "unknown"),
-            "whale_score": whale_score,
             "sentiment": sentiment,
             "trend": trend_dir,
             "volume_category": volume_level,
             "news_summary": news_data.get("news_summary", "UNKNOWN") if isinstance(news_data, dict) else news_data,
             "delta_1m": delta_1m,
             "delta_5m": delta_5m,
-            "lstm_prediction": lstm_pred,
 
             "indicators": {
                 # сигналові значення з детальних індикаторів
@@ -244,7 +237,6 @@ def build_monitor_snapshot(symbol):
                 "microtrend_1m": microtrend_1m_data,
                 "microtrend_5m": microtrend_5m_data,
                 "volume_analysis": volume_data,
-                "whale_score": whale_score_data,
                 "global_trend": global_trend_data,
                 "news_summary": news_data
             },
@@ -452,9 +444,7 @@ def convert_snapshot_to_conditions(snapshot):
             # Обсяг/волатильність/глобалка
             "volume_category": market_trend_data.get("volume_category", "unknown"),
             "global_trend": indicators.get("global_trend", "unknown"),
-            "lstm_prediction": snapshot.get("lstm_prediction", 0.0),
             "proximity_to_high": snapshot.get("proximity_to_high", 0.0),
-            "whale_score": snapshot.get("whale_score", 0),
             "news_sentiment": news_sentiment,
             "volatility_pct": volatility_data.get("percentage", 0.0),
             "volatility_level": volatility_data.get("level", "unknown"),

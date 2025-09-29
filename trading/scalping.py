@@ -42,7 +42,10 @@ from uuid import uuid4
 from utils.logger import mark_trade_closed, remove_active_trade, prune_inactive_trades
 from utils.allocator import plan_allocation_for_new_trade
 from utils.allocator import  has_open_trade_for,get_open_trades_count
-
+from config import MAX_LONG_TRADES, MAX_SHORT_TRADES
+from utils.tools import get_open_trades_count_by_side
+from config import SMART_AVG, bybit  # ✅ правильний імпорт
+from utils.logger import append_active_trade
 
 ACTIVE_TRADES_FILE_SIMPLE = "data/ActiveTradesSimple.json"
 
@@ -416,7 +419,6 @@ def log_watchlist_reason(symbol, side, reason, conditions=None):
         blockers = []
 
         if isinstance(conditions, dict):
-            # === поля, які реально читають твої check_* ===
             keys = [
                 "support_position", "global_trend", "volume_category",
                 "macd_trend", "macd_hist_direction", "macd_crossed",
@@ -430,27 +432,21 @@ def log_watchlist_reason(symbol, side, reason, conditions=None):
             for k in keys:
                 minimal[k] = safe(conditions.get(k))
 
-            # канонізовані патерни для fast-lane
             minimal["patterns_canon"] = _canonicalize_patterns_for_log(conditions.get("patterns", []))
-
-            # === формуємо blockers відповідно до ТОЧНИХ правил у check_* ===
             side = str(side or "").upper()
-
             sp = str(minimal.get("support_position", "")).lower()
             gt = str(minimal.get("global_trend", "unknown")).lower()
             vol = str(minimal.get("volume_category", "unknown")).lower()
-
             macd_trend = minimal.get("macd_trend", "neutral")
-            macd_hist  = minimal.get("macd_hist_direction", "flat")
+            macd_hist = minimal.get("macd_hist_direction", "flat")
             macd_cross = minimal.get("macd_crossed", "none")
 
             try:
                 rsi_val = float(minimal.get("rsi_value", 0) or 0)
             except Exception:
                 rsi_val = 0.0
-            rsi_trend  = str(minimal.get("rsi_trend", "flat")).lower()
+            rsi_trend = str(minimal.get("rsi_trend", "flat")).lower()
             rsi_signal = minimal.get("rsi_signal", "neutral")
-
             stoch_signal = minimal.get("stoch_signal", "neutral")
             try:
                 k_val = float(minimal.get("stoch_k")) if minimal.get("stoch_k") is not None else None
@@ -460,115 +456,84 @@ def log_watchlist_reason(symbol, side, reason, conditions=None):
                 d_val = float(minimal.get("stoch_d")) if minimal.get("stoch_d") is not None else None
             except Exception:
                 d_val = None
-
             try:
                 bb_pos = float(minimal.get("bollinger_position", 50) or 50)
             except Exception:
                 bb_pos = 50.0
             bb_sig = minimal.get("bollinger_signal", "neutral")
-
             cci_sig = minimal.get("cci_signal", "neutral")
             try:
                 cci_val = float(minimal.get("cci_value", 0) or 0)
             except Exception:
                 cci_val = 0.0
-
             micro1m = str(minimal.get("microtrend_1m", "neutral")).lower()
             try:
                 delta_1m = float(minimal.get("delta_1m", 0) or 0)
             except Exception:
                 delta_1m = 0.0
 
-            # --- загальні блокери ---
             if vol == "very_low":
                 blockers.append("volume_category=very_low")
 
             if side == "LONG":
-                # support/global
                 if sp not in ("near_support", "between"):
                     blockers.append(f"support_position={sp} (need near_support/between)")
                 if gt not in ("bullish", "strong_bullish", "flat"):
                     blockers.append(f"global_trend={gt} (need bullish/strong_bullish/flat)")
-
-                # MACD
                 if not ((macd_trend == "bullish") or (macd_hist == "up")):
                     blockers.append("MACD: need trend=bullish or hist=up")
                 if macd_cross not in ("none", "bullish"):
                     blockers.append(f"macd_crossed={macd_cross} (need none/bullish)")
-
-                # RSI
                 if not (30 <= rsi_val <= 62):
                     blockers.append(f"RSI out of 30..62 ({rsi_val})")
                 if rsi_trend not in ("up", "neutral"):
                     blockers.append(f"rsi_trend={rsi_trend} (need up/neutral)")
                 if rsi_signal not in ("oversold", "neutral", "bullish_momentum"):
                     blockers.append(f"rsi_signal={rsi_signal} (need oversold/neutral/bullish_momentum)")
-
-                # Stoch
                 if stoch_signal not in ("oversold", "oversold_cross_up", "neutral"):
                     blockers.append(f"stoch_signal={stoch_signal} (need oversold/oversold_cross_up/neutral)")
                 if k_val is not None and d_val is not None:
                     if not (k_val <= 40 or d_val <= 40):
                         blockers.append(f"stoch too high (K={k_val}, D={d_val}, need any≤40)")
-
-                # Bollinger
                 if not (bb_pos <= 60):
                     blockers.append(f"bollinger_position={bb_pos} (need ≤60)")
                 if bb_sig not in ("neutral", "bullish_momentum"):
                     blockers.append(f"bollinger_signal={bb_sig} (need neutral/bullish_momentum)")
-
-                # Micro
                 if micro1m == "bearish" and delta_1m < 0:
                     blockers.append(f"microtrend_1m=bearish with delta_1m={delta_1m}")
 
             elif side == "SHORT":
-                # support/global
                 if sp not in ("near_resistance", "between"):
                     blockers.append(f"support_position={sp} (need near_resistance/between)")
                 if gt not in ("bullish", "strong_bullish", "flat", "bearish"):
                     blockers.append(f"global_trend={gt} (need bullish/strong_bullish/flat/bearish)")
-
-                # MACD
                 if not ((macd_trend == "bearish") or (macd_hist == "down")):
                     blockers.append("MACD: need trend=bearish or hist=down")
                 if macd_cross not in ("none", "bearish"):
                     blockers.append(f"macd_crossed={macd_cross} (need none/bearish)")
-
-                # RSI
                 if not (55 <= rsi_val <= 78):
                     blockers.append(f"RSI out of 55..78 ({rsi_val})")
                 if rsi_trend not in ("down", "neutral", "up"):
                     blockers.append(f"rsi_trend={rsi_trend} (invalid)")
                 if rsi_signal not in ("neutral", "bullish_momentum", "overbought"):
                     blockers.append(f"rsi_signal={rsi_signal} (need neutral/bullish_momentum/overbought)")
-
-                # Stoch
                 if stoch_signal not in ("overbought", "neutral"):
                     blockers.append(f"stoch_signal={stoch_signal} (need overbought/neutral)")
                 if k_val is not None and d_val is not None:
                     if not (k_val >= 70 or d_val >= 70):
                         blockers.append(f"stoch too low (K={k_val}, D={d_val}, need any≥70)")
-
-                # CCI
                 if not ((cci_sig in ("overbought", "neutral")) and (cci_val >= 60)):
                     blockers.append(f"CCI weak: {cci_sig} {cci_val} (need sig overbought/neutral and value≥60)")
-
-                # Bollinger
                 if not (bb_pos >= 65):
                     blockers.append(f"bollinger_position={bb_pos} (need ≥65)")
                 if bb_sig not in ("neutral", "bearish_momentum", "bullish_momentum"):
                     blockers.append(f"bollinger_signal={bb_sig} (invalid)")
-
-                # Micro
                 if micro1m == "bullish" and delta_1m > 0:
                     blockers.append(f"microtrend_1m=bullish with delta_1m={delta_1m}")
 
-            # Якщо blockers порожній, а угоди нема — значить або ще не всі дані стабільні,
-            # або fast-lane патерн не з’явився — це теж корисно бачити в логах.
             if not blockers:
                 blockers.append("no hard blockers; waiting for confirmation/fast-lane")
 
-        # формуємо запис
         entry = {
             "timestamp": timestamp,
             "symbol": symbol,
@@ -578,7 +543,7 @@ def log_watchlist_reason(symbol, side, reason, conditions=None):
             "conditions": minimal
         }
 
-        # безпечне читання існуючого логу
+        # Читання існуючого логу
         try:
             existing = []
             if os.path.exists(filepath):
@@ -589,9 +554,14 @@ def log_watchlist_reason(symbol, side, reason, conditions=None):
         except Exception:
             existing = []
 
+        # 🔁 Обрізаємо якщо перевищує 1000 записів
+        MAX_WATCHLIST_LOG = 1000
+        if len(existing) >= MAX_WATCHLIST_LOG:
+            existing = existing[-MAX_WATCHLIST_LOG // 2:]
+
         existing.append(entry)
 
-        # атомарний запис
+        # Атомарний запис
         tmp = filepath + ".tmp"
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump(existing, f, indent=2, ensure_ascii=False)
@@ -751,10 +721,19 @@ def find_best_scalping_targets():
                 # фейковий safe-стаб, нічого не блокує
                 return {"innovation": False, "young": False, "thin": False, "risky": False, "days_listed": None}
 
-        # ---------------- Universe ----------------
-        symbols = get_top_symbols(limit=15)
+        # ---------------- Universe (manual whitelist) ----------------
+        # 1) твій ручний список (редагуй тут)
+        symbols = [
+           "ADAUSDT","ETHUSDT","BNBUSDT","SOLUSDT","XRPUSDT",
+           "BCHUSDT","DOGEUSDT","TRXUSDT","LINKUSDT","HBARUSDT",
+           "AVAXUSDT","SUIUSDT","HYPEUSDT","LTCUSDT","CROUSDT"
+        ]
+
+        import random
         random.shuffle(symbols)
-        log_debug(f"Монети для аналізу: {symbols}")
+        log_debug(f"Монети для аналізу (manual): {symbols}")
+        # ---------------- /Universe ----------------
+
 
         watchlist_data = load_watchlist() or []
 
@@ -927,6 +906,20 @@ def execute_scalping_trade(target, balance, position_side, behavior_summary, man
             if open_now >= MAX_ACTIVE_TRADES:
                 log_message(f"🛑 [SAFEGUARD] Ліміт досягнуто: {open_now} ≥ {MAX_ACTIVE_TRADES}")
                 return
+
+            # ✅ Обмеження на LONG/SHORT угоди окремо
+            if position_side.upper() == "LONG":
+                long_count = get_open_trades_count_by_side("LONG")
+                if long_count >= MAX_LONG_TRADES:
+                    log_message(f"🛑 [SAFEGUARD] Ліміт LONG угод досягнуто: {long_count} ≥ {MAX_LONG_TRADES}")
+                    return
+
+            if position_side.upper() == "SHORT":
+                short_count = get_open_trades_count_by_side("SHORT")
+                if short_count >= MAX_SHORT_TRADES:
+                    log_message(f"🛑 [SAFEGUARD] Ліміт SHORT угод досягнуто: {short_count} ≥ {MAX_SHORT_TRADES}")
+                    return
+    
 
             # 🛡 антидубль по символу (якщо вже є активна угода по цьому символу)
             if has_open_trade_for(symbol):
@@ -1439,6 +1432,8 @@ def manage_open_trade(symbol, entry_price, side, amount, leverage, behavior_summ
     # ===== Основний цикл =====
     try:
         while True:
+            already_added_in_this_cycle = False
+
             current_price = Decimal(str(get_current_futures_price(symbol_clean)))
 
             # 🌐 Перевірка позиції
@@ -1484,6 +1479,19 @@ def manage_open_trade(symbol, entry_price, side, amount, leverage, behavior_summ
             log_message(f"[DCA] need {'<=' if is_long else '>='} {float(need_px):.6f}; cur={float(current_price):.6f}; "
                         f"anchor={anchor_mode}; step={dca_step_pct*100:.2f}%; adds={adds_done}/{max_adds}")
 
+            
+            # 🔄 ОНОВИТИ smart_avg перед перевіркою TP
+            if trade_id and 'get_active_trade' in globals():
+                tr = get_active_trade(trade_id)
+                if tr and isinstance(tr, dict):
+                    smart = tr.get("smart_avg", smart)
+                    if smart:
+                        avg_entry = Decimal(str(smart.get("avg_entry", avg_entry)))
+                        adds_done = int(smart.get("adds_done", adds_done))
+                        tp_price = Decimal(str(smart.get("tp_price", calc_tp_from_avg())))
+                        log_message(f"📊 [TP-DIAG] Перечитано avg_entry={avg_entry}, tp_price={tp_price}, adds={adds_done}")
+
+
             # ====== BOT-ONLY TP з ε-допуском + верифікація PnL ======
             tp_price = calc_tp_from_avg()
             eps = Decimal(str(TP_EPSILON))
@@ -1511,7 +1519,8 @@ def manage_open_trade(symbol, entry_price, side, amount, leverage, behavior_summ
                 break
 
             # ====== DCA: докупка ======
-            if dca_enabled and adds_done < max_adds and price_ok_for_dca(current_price):
+            if dca_enabled and adds_done < max_adds and price_ok_for_dca(current_price) and not already_added_in_this_cycle:
+
                 # кулдаун між докупками
                 now_ts = time.time()
                 if now_ts - _last_add_ts < MIN_SECONDS_BETWEEN_ADDS:
@@ -1585,7 +1594,9 @@ def manage_open_trade(symbol, entry_price, side, amount, leverage, behavior_summ
                 avg_entry = Decimal(str((prev_avg * prev_qty + fill_price * filled_qty) / total_qty))
                 total_margin_used += float(add_margin)
                 adds_done += 1
-                _last_add_ts = now_ts
+                _last_add_ts = time.time()
+                already_added_in_this_cycle = True 
+
 
                 # Зрушуємо "драбину" на наступний рівень
                 s = Decimal(str(dca_step_pct))
@@ -1620,6 +1631,7 @@ def manage_open_trade(symbol, entry_price, side, amount, leverage, behavior_summ
                     f"Новий TP: {float(tp_price):.6f}\n"
                     f"🎯 Наступний рівень: {float(next_dca_price()):.6f} (anchor={anchor_mode})"
                 )
+                log_debug(f"[DCA] Докупка зроблена. Закінчуємо цикл, щоб уникнути подвійного входу.")
 
             # ===== Опційний cut при розвороті тренду (частковий) =====
             if trend_flip_cut_pct > 0:
@@ -1750,31 +1762,25 @@ def monitor_all_open_trades():
                     continue
 
                 symbol = pos.get("symbol")
-                # Сторона: з positionSide або з side
                 raw_ps = str(pos.get("positionSide", "")).upper()
                 if raw_ps in ("LONG", "SHORT"):
                     side = raw_ps
                 else:
                     side = "LONG" if str(pos.get("side", "")).upper() == "BUY" else "SHORT"
 
-                # Ціна входу: використовуємо avgEntryPrice, фолбек на avgPrice
                 try:
                     entry_price = float(pos.get("avgEntryPrice") or pos.get("avgPrice") or 0.0)
                 except Exception:
                     entry_price = 0.0
 
-                # Плече
                 try:
                     leverage = int(float(pos.get("leverage", 1)))
                 except Exception:
                     leverage = 1
 
-                # 🔑 Спробувати підхопити наш локальний trade_id
                 trade_id = resolve_trade_id(symbol, side)
                 if not trade_id:
-                    # Резервний біржовий ідентифікатор (НЕ використовується для оновлення stats, тільки для ключа потоку)
-
-                    local_id = resolve_trade_id(symbol, side)     # 👈 спробує знайти наш trade_id у ActiveTrades
+                    local_id = resolve_trade_id(symbol, side)
                     trade_id = local_id or f"{symbol}_{pos.get('positionIdx', '0')}"
 
                 live_trades[trade_id] = {
@@ -1791,14 +1797,12 @@ def monitor_all_open_trades():
                     "monitoring_sessions": []
                 }
 
-                # 📝 Спрощений запис (окремий файл, не чіпає повний ActiveTrades.json)
                 simple_trades[trade_id] = {
                     "symbol": symbol,
                     "side": side,
                     "opened_at": current_time
                 }
 
-            # 🔹 Пишемо спрощений файл окремо, щоб не зносити повні записи
             try:
                 with open(ACTIVE_TRADES_FILE_SIMPLE, "w", encoding="utf-8") as f:
                     json.dump(simple_trades, f, indent=2, ensure_ascii=False)
@@ -1808,7 +1812,18 @@ def monitor_all_open_trades():
             except Exception as e:
                 log_error(f"❌ [monitor_all_open_trades] Помилка при записі ActiveTradesSimple.json: {e}")
 
-            # 🚀 Стартуємо моніторинг для кожної угоди (по нашому або резервному trade_id)
+            # ✅ Відновлення smart_avg, якщо запис був втрачений
+            try:
+                from utils.logger import load_active_trades
+                current_active = load_active_trades()
+                if not current_active:
+                    restored = restore_all_missing_smartavg()
+                    log_message(f"🛠️ [RECOVERY] Відновлено записів smart_avg: {restored}")
+                else:
+                    log_message("ℹ️ ActiveTrades.json існує, відновлення smart_avg не потрібно")
+            except Exception as e:
+                log_error(f"❌ [RECOVERY] Помилка при restore_all_missing_smartavg: {e}")
+
             for trade_id, trade in live_trades.items():
                 if trade_id not in active_threads:
                     log_debug(f"Запуск моніторингу для {trade_id} (API)")
@@ -1819,9 +1834,6 @@ def monitor_all_open_trades():
                     )
                     t.start()
                     active_threads[trade_id] = t
-                else:
-                    # вже моніториться — пропускаємо
-                    pass
 
         except Exception as e:
             log_error(f"❌ monitor_all_open_trades (API): {e}")
@@ -1830,3 +1842,146 @@ def monitor_all_open_trades():
 
 
 
+def reconstruct_smart_avg_from_position(pos):
+    try:
+        from config import SMART_AVG
+        symbol = pos.get("symbol")
+        side = "LONG" if str(pos.get("side", "")).upper() == "BUY" else "SHORT"
+        size = float(pos.get("size") or 0.0)
+
+        if size <= 0:
+            log_message(f"⚩️ Пропущено {symbol} — нульовий обсяг")
+            return None
+
+        entry_price = float(pos.get("avgPrice") or 0.0)
+        if entry_price <= 0:
+            log_message(f"⚩️ Пропущено {symbol} — некоректна ціна входу (entry={entry_price})")
+            return None
+
+        leverage = int(float(pos.get("leverage") or 5))
+        position_value = entry_price * size
+        margin_used = position_value / leverage
+
+        anchor = SMART_AVG.get("anchor", "ladder")
+        dca_step_pct = float(SMART_AVG.get("dca_step_pct", 0.025))
+        tp_from_avg_pct = float(SMART_AVG.get("tp_from_avg_pct", 0.012))
+        max_adds = int(SMART_AVG.get("max_adds", 14))
+        base_margin = float(SMART_AVG.get("base_margin", 30.0))
+
+        # === Розрахунок adds_done через total_margin_used
+        raw_adds = margin_used / base_margin
+        adds_done = int(round(raw_adds)) - 1  # бо перший вхід не вважається докупкою
+        adds_done = max(0, min(adds_done, max_adds))
+
+        tp_price = entry_price * (1 + tp_from_avg_pct) if side == "LONG" else entry_price * (1 - tp_from_avg_pct)
+
+        return {
+            "enabled": True,
+            "avg_entry": round(entry_price, 6),
+            "adds_done": adds_done,
+            "max_adds": max_adds,
+            "dca_step_pct": dca_step_pct,
+            "dca_mode": SMART_AVG.get("dca_mode", "equal"),
+            "dca_factor": SMART_AVG.get("dca_factor", 1.3),
+            "tp_from_avg_pct": tp_from_avg_pct,
+            "alt_tp_from_avg_pct": SMART_AVG.get("alt_tp_from_avg_pct", 0.012),
+            "tp_price": round(tp_price, 6),
+            "tp_order_id": None,
+            "total_margin_used": round(margin_used, 2),
+            "total_qty": round(size, 4),
+            "max_margin_per_trade": SMART_AVG.get("max_margin_per_trade", 800.0),
+            "min_liq_buffer": SMART_AVG.get("min_liq_buffer", 0.0),
+            "atr_pause_pct": SMART_AVG.get("atr_pause_pct", 999.0),
+            "trend_flip_cut_pct": SMART_AVG.get("trend_flip_cut_pct", 0.01),
+            "cooldown_min": SMART_AVG.get("cooldown_min", 25),
+            "anchor": anchor,
+            "entry0": round(entry_price, 6),
+            "ladder_next_price": round(entry_price * (1 - dca_step_pct), 6) if side == "LONG" else round(entry_price * (1 + dca_step_pct), 6),
+        }
+
+    except Exception as e:
+        log_error(f"[reconstruct_smart_avg_from_position] {type(e).__name__}: {e}")
+        return None
+
+
+def restore_all_missing_smartavg():
+    """
+    📦 Відновлює smart_avg для всіх відкритих позицій на біржі (якщо вони відсутні в ActiveTrades.json)
+    """
+    try:
+        response = bybit.get_positions(category="linear", settleCoin="USDT")
+        positions = response.get("result", {}).get("list", []) or []
+
+        restored = 0
+        for pos in positions:
+            symbol = pos.get("symbol")
+            side = "LONG" if str(pos.get("side", "")).upper() == "BUY" else "SHORT"
+            size = float(pos.get("size") or 0.0)
+            entry_price = float(pos.get("avgPrice") or 0.0)
+            leverage = int(float(pos.get("leverage") or 5))
+
+            if size <= 0 or entry_price <= 0:
+                continue
+
+            trade_id = f"{symbol}_{side}"
+
+            smart_avg = reconstruct_smart_avg_from_position(pos)
+            if not smart_avg:
+                continue
+
+            trade_data = {
+                "trade_id": trade_id,
+                "symbol": symbol,
+                "side": side,
+                "entry_price": entry_price,
+                "leverage": leverage,
+                "amount": size,
+                "smart_avg": smart_avg,
+                "closed": False,
+                "reconstructed": True,
+                "reconstructed_at": datetime.utcnow().isoformat(),
+                "behavior_summary": {
+                    "entry_reason": "RECONSTRUCTED",
+                    "score": 0,
+                    "signals": {}
+                },
+                "monitoring_sessions": []
+            }
+
+            # 🧠 Спочатку пробуємо оновити (якщо вже існує)
+            success = update_active_trade(trade_id, trade_data)
+
+            if not success:
+                append_active_trade(trade_data)
+                log_message(f"🆕 Додано трейд {trade_id} у ActiveTrades.json")
+
+            log_message(f"🔧 Відновлено SmartAvg для {symbol} ({side}): adds={smart_avg['adds_done']}")
+            restored += 1
+
+        if restored:
+            log_message(f"✅ Успішно відновлено {restored} smart_avg позицій у ActiveTrades.json")
+        else:
+            log_message("ℹ️ Немає позицій для відновлення smart_avg")
+
+        return restored
+
+    except Exception as e:
+        log_error(f"[restore_all_missing_smartavg] {type(e).__name__}: {e}")
+        return 0
+
+
+def calculate_adds_done_ladder(entry0: float, avg_entry: float, dca_step_pct: float, side: str) -> int:
+    """
+    📐 Розраховує adds_done на основі entry0, avg_entry і кроку драбини.
+    """
+    try:
+        if entry0 <= 0 or avg_entry <= 0 or dca_step_pct <= 0:
+            return 0
+        price_ratio = entry0 / avg_entry if side.upper() == "LONG" else avg_entry / entry0
+        step_factor = 1 - dca_step_pct if side.upper() == "LONG" else 1 + dca_step_pct
+        adds = math.log(price_ratio) / math.log(step_factor)
+        return max(0, round(adds))
+    except Exception as e:
+        log_error(f"[calculate_adds_done_ladder] {type(e).__name__}: {e}")
+        return 0
+       

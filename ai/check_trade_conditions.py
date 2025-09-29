@@ -4,7 +4,7 @@ from typing import Dict, Any, List, Tuple
 
 REJECTION_LOG_PATH = os.path.join("logs", "rejections.jsonl")
 ENABLE_REJECTION_LOG = True
-LOG_ONLY_CLOSED_CANDLE = False          # щоб не засмічувати лог сирими тиками
+LOG_ONLY_CLOSED_CANDLE = True          # щоб не засмічувати лог сирими тиками
 MAX_REASONS_IN_SUMMARY = 3             # коротке резюме
 
 def _reason_summary(res: dict) -> str:
@@ -51,7 +51,9 @@ def _log_rejection(symbol: str | None, side: str, payload: dict) -> None:
     try:
         if LOG_ONLY_CLOSED_CANDLE and not payload.get("evidence", {}).get("bar_closed", True):
             return
+
         os.makedirs(os.path.dirname(REJECTION_LOG_PATH), exist_ok=True)
+
         entry = {
             "ts": time.strftime("%Y-%m-%dT%H:%M:%S"),
             "symbol": symbol or payload.get("evidence", {}).get("symbol", "UNKNOWN"),
@@ -61,10 +63,23 @@ def _log_rejection(symbol: str | None, side: str, payload: dict) -> None:
             "key_evidence": _key_evidence(payload.get("evidence", {})),
             "matched": payload.get("matched", [])[:5]
         }
-        with open(REJECTION_LOG_PATH, "a", encoding="utf-8") as f:
-            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
-    except Exception:
-        pass
+
+        # === ⏳ Самоочистка, якщо більше ніж 1000 рядків ===
+        MAX_REJECTIONS = 1000
+        lines = []
+        if os.path.exists(REJECTION_LOG_PATH):
+            with open(REJECTION_LOG_PATH, "r", encoding="utf-8", errors="ignore") as f:
+                lines = f.readlines()
+            if len(lines) >= MAX_REJECTIONS:
+                lines = lines[-MAX_REJECTIONS // 2:]
+
+        lines.append(json.dumps(entry, ensure_ascii=False) + "\n")
+
+        with open(REJECTION_LOG_PATH, "w", encoding="utf-8") as f:
+            f.writelines(lines)
+
+    except Exception as e:
+        print(f"❌ [_log_rejection] Помилка: {e}")
 
 
 # -*- coding: utf-8 -*-
@@ -641,15 +656,95 @@ def _score_son(side: str, c: Dict[str, Any], regime: Dict[str, Any]) -> Dict[str
     res["reasons"].extend(r2)
     return res
 
+# -*- coding: utf-8 -*-
+"""
+CheckTradeConditions — SON-style rule engine (15m)
+Тепер з підтримкою кастомних умов через custom_conditions.json
+- API: evaluate_long, evaluate_short, evaluate_both(raw_conditions: dict) -> dict
+"""
+
+import json, os, time
+from typing import Dict, Any, List, Tuple
+from utils.logger import log_message
+
+# === ⚙️ КОНФІГУРАЦІЯ ===
+USE_CUSTOM_CONDITIONS = True
+CUSTOM_CONDITIONS_PATH = "config/custom_conditions.json"
+
+# === ПЕРЕВАНТАЖЕННЯ КАСТОМНИХ ПРАВИЛ ===
+def load_custom_conditions() -> Dict[str, Any]:
+    try:
+        if not os.path.exists(CUSTOM_CONDITIONS_PATH):
+            return {}
+        with open(CUSTOM_CONDITIONS_PATH, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception as e:
+        log_message(f"❌ Не вдалося завантажити кастомні умови: {e}")
+        return {}
+
+CUSTOM_RULES = load_custom_conditions()
+
+# === КАСТОМНА ЛОГІКА ===
+def get_custom_logic(side: str) -> Dict[str, Any] | None:
+    if not USE_CUSTOM_CONDITIONS:
+        return None
+    if not isinstance(CUSTOM_RULES, dict):
+        return None
+    return CUSTOM_RULES.get(side.lower(), None)
+
+# === ПЕРЕЗАПИСУЄМО _score_son ===
+def _score_custom(side: str, c: Dict[str, Any], regime: Dict[str, Any], logic: Dict[str, Any]) -> Dict[str, Any]:
+    core = logic.get("core", [])
+    pairs = logic.get("pairs", [])
+    weights = logic.get("weights", {}) or {}
+    soft_factors = logic.get("soft_factors", {}) or {}
+    w_core = weights.get("core", 3.5)
+    w_pair = weights.get("pair", 1.6)
+    w_bonus = weights.get("bonus", 0.8)
+
+    score = 0.0
+    reasons: List[str] = []
+    matched: List[str] = []
+
+    core_hits = [(k, v) for (k, v) in core if c.get(k) == v]
+    score += w_core * len(core_hits)
+    if core_hits:
+        reasons.append(f"{side}.custom.core hits={len(core_hits)} → {core_hits}")
+        matched.extend([f"{k}={v}" for k, v in core_hits])
+
+    pair_hits: List[List[Tuple[str, str]]] = []
+    for pp in pairs:
+        if all(c.get(k) == v for k, v in pp):
+            score += w_pair
+            pair_hits.append(pp)
+            matched.append("&".join([f"{k}={v}" for k, v in pp]))
+    if pair_hits:
+        reasons.append(f"{side}.custom.pairs hits={len(pair_hits)} → {pair_hits}")
+
+    # бонус за трендовість
+    if regime["is_trend"]:
+        score += w_bonus
+        reasons.append(f"{side}.custom bonus: trend regime")
+
+    # підтримка кастомного soft_factors (необовʼязково)
+    # тут можна додати щось з soft_factors у майбутньому
+
+    return {
+        "score": score,
+        "matched": matched,
+        "reasons": reasons,
+        "_pair_hits_count": len(pair_hits),
+        "_core_hits_count": len(core_hits)
+    }
+
+# === ПЕРЕЗАПИСУЄМО evaluate ===
 def evaluate_long(raw_conditions: Dict[str, Any]) -> Dict[str, Any]:
     c = _build_derived(raw_conditions)
     regime = _detect_regime(c)
-    res = _score_son("LONG", c, regime)
 
-    # стандартний поріг
-    allow = res["score"] >= THRESH_LONG
-
-    # проганяємо анти-фільтри (включно з fast-track послабленнями)
+    logic = get_custom_logic("long")
+    res = _score_custom("LONG", c, regime, logic) if logic else _score_son("LONG", c, regime)
+    allow = res["score"] >= (logic.get("threshold", THRESH_LONG) if logic else THRESH_LONG)
     allow, res = _apply_anti_filters("LONG", c, res, allow)
     payload = _public_payload("LONG", allow, res, c, regime)
     if not payload["allow"]:
@@ -659,10 +754,10 @@ def evaluate_long(raw_conditions: Dict[str, Any]) -> Dict[str, Any]:
 def evaluate_short(raw_conditions: Dict[str, Any]) -> Dict[str, Any]:
     c = _build_derived(raw_conditions)
     regime = _detect_regime(c)
-    res = _score_son("SHORT", c, regime)
 
-    allow = res["score"] >= THRESH_SHORT
-
+    logic = get_custom_logic("short")
+    res = _score_custom("SHORT", c, regime, logic) if logic else _score_son("SHORT", c, regime)
+    allow = res["score"] >= (logic.get("threshold", THRESH_SHORT) if logic else THRESH_SHORT)
     allow, res = _apply_anti_filters("SHORT", c, res, allow)
     payload = _public_payload("SHORT", allow, res, c, regime)
     if not payload["allow"]:

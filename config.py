@@ -2,8 +2,15 @@
 
 import os
 import json
+from pathlib import Path
+from typing import Dict, Any
+
 from dotenv import load_dotenv
-from pybit.unified_trading import HTTP
+
+try:
+    from pybit.unified_trading import HTTP  # type: ignore
+except Exception:  # pragma: no cover - pybit може бути відсутній у тестовому середовищі
+    HTTP = None  # type: ignore
 
 # ============================ 🔐 КЛЮЧІ/КЛІЄНТ ============================
 load_dotenv()
@@ -11,20 +18,68 @@ BYBIT_API_KEY = os.getenv("BYBIT_API_KEY")
 BYBIT_API_SECRET = os.getenv("BYBIT_API_SECRET")
 
 EXCHANGE = "bybit"
-bybit = HTTP(api_key=BYBIT_API_KEY, api_secret=BYBIT_API_SECRET)
+
+
+class MockHTTP:
+    """Примітивний мок-клієнт Bybit для офлайн-режиму."""
+
+    def __init__(self):
+        self.is_mock = True
+
+    def __getattr__(self, name):  # pragma: no cover - простий мок
+        def _call(*args, **kwargs):
+            return {
+                "retCode": 0,
+                "retMsg": f"mocked:{name}",
+                "result": {"list": []},
+                "time": 0,
+            }
+
+        return _call
+
+
+if HTTP and BYBIT_API_KEY and BYBIT_API_SECRET:
+    bybit = HTTP(api_key=BYBIT_API_KEY, api_secret=BYBIT_API_SECRET)
+else:
+    bybit = MockHTTP()
+
 client = bybit  # універсальний псевдонім
 
 # ============================ ⚙️ ЗАВАНТАЖЕННЯ UI-КОНФІГУ ============================
-UI_CONFIG_PATH = "config/config_ui.json"
+UI_CONFIG_PATHS = [
+    Path("config/config_ui.json"),
+    Path("config_ui.json"),
+]
 
-def load_ui_config():
+
+def _resolve_ui_config_path() -> Path:
+    """Повертає перший існуючий шлях для UI-конфігурації або стандартний."""
+    for candidate in UI_CONFIG_PATHS:
+        if candidate.exists():
+            return candidate
+    # Якщо файл відсутній — створюємо у стандартному місці
+    default_path = UI_CONFIG_PATHS[0]
+    default_path.parent.mkdir(parents=True, exist_ok=True)
+    default_path.write_text(json.dumps({}, indent=2, ensure_ascii=False))
+    return default_path
+
+
+def load_ui_config() -> Dict[str, Any]:
+    path = _resolve_ui_config_path()
     try:
-        if os.path.exists(UI_CONFIG_PATH):
-            with open(UI_CONFIG_PATH, "r", encoding="utf-8") as f:
-                return json.load(f)
+        with path.open("r", encoding="utf-8") as f:
+            return json.load(f)
     except Exception as e:
-        print(f"❌ Не вдалося завантажити UI-конфіг: {e}")
-    return {}
+        print(f"❌ Не вдалося завантажити UI-конфіг ({path}): {e}")
+        return {}
+
+
+def save_ui_config(data: Dict[str, Any]) -> None:
+    path = _resolve_ui_config_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2, ensure_ascii=False)
+
 
 UI = load_ui_config()
 
@@ -49,6 +104,8 @@ GET_TOP_SYMBOLS_CONFIG = UI.get("GET_TOP_SYMBOLS_CONFIG", {
 
 MAX_ACTIVE_TRADES = UI.get("MAX_ACTIVE_TRADES", 5)
 DRY_RUN = UI.get("DRY_RUN", False)
+if isinstance(bybit, MockHTTP):
+    DRY_RUN = True
 
 # ============================ 💰 МАНУАЛЬНІ ПАРАМЕТРИ ============================
 USE_MANUAL_BALANCE = UI.get("USE_MANUAL_BALANCE", True)

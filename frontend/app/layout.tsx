@@ -1,16 +1,17 @@
 import type { Metadata } from "next";
 import "./globals.css";
+import { AuthProvider } from "@/components/auth-provider";
 
 export const metadata: Metadata = {
-  title: "AI-Lona SaaS",
-  description: "Control center for the AI-Lona trading bot"
+  title: "LonaMind Platform",
+  description: "Premium control center for the AI-Lona trading intelligence",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en">
-      <body>
-        <main>{children}</main>
+    <html lang="en" suppressHydrationWarning>
+      <body className="font-sans">
+        <AuthProvider>{children}</AuthProvider>
       </body>
     </html>
   );

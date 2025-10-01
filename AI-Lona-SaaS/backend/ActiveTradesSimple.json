@@ -1,0 +1,18 @@
+[
+  {
+    "symbol": "BTCUSDT",
+    "side": "LONG",
+    "entry_price": 27350.5,
+    "amount": 0.05,
+    "leverage": 10,
+    "pnl_percent": 3.2
+  },
+  {
+    "symbol": "ETHUSDT",
+    "side": "SHORT",
+    "entry_price": 1650.0,
+    "amount": 0.2,
+    "leverage": 20,
+    "pnl_percent": -1.4
+  }
+]

@@ -9,11 +9,12 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
-export default function LoginPage() {
-  const { login } = useAuth();
+export default function RegisterPage() {
+  const { register } = useAuth();
   const router = useRouter();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [team, setTeam] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -21,12 +22,12 @@ export default function LoginPage() {
     event.preventDefault();
     setError(null);
     if (!email || !password) {
-      setError("Enter your credentials to continue.");
+      setError("Complete all fields to activate your console.");
       return;
     }
     try {
       setLoading(true);
-      await login(email, password);
+      await register(email, password);
       router.push("/app/dashboard");
     } catch (err) {
       setError((err as Error).message);
@@ -36,8 +37,17 @@ export default function LoginPage() {
   }
 
   return (
-    <AuthShell title="Welcome back" subtitle="Authenticate to orchestrate your trading intelligence.">
+    <AuthShell title="Create your LonaMind workspace" subtitle="Spin up a dedicated environment for your strategies.">
       <form className="space-y-5" onSubmit={handleSubmit}>
+        <div className="space-y-2">
+          <Label htmlFor="team">Workspace name</Label>
+          <Input
+            id="team"
+            placeholder="Helios Capital"
+            value={team}
+            onChange={(event) => setTeam(event.target.value)}
+          />
+        </div>
         <div className="space-y-2">
           <Label htmlFor="email">Email</Label>
           <Input
@@ -46,7 +56,7 @@ export default function LoginPage() {
             autoComplete="email"
             value={email}
             onChange={(event) => setEmail(event.target.value)}
-            placeholder="you@alpha.fund"
+            placeholder="lead@helios.capital"
           />
         </div>
         <div className="space-y-2">
@@ -54,18 +64,18 @@ export default function LoginPage() {
           <Input
             id="password"
             type="password"
-            autoComplete="current-password"
+            autoComplete="new-password"
             value={password}
             onChange={(event) => setPassword(event.target.value)}
-            placeholder="••••••••"
+            placeholder="Create a strong passphrase"
           />
         </div>
         {error && <p className="text-sm text-amber-300/80">{error}</p>}
         <Button type="submit" className="w-full" disabled={loading}>
-          {loading ? "Decrypting console..." : "Login"}
+          {loading ? "Preparing workspace..." : "Create workspace"}
         </Button>
         <p className="text-center text-xs text-slate-400">
-          Need an invite? <Link href="/register" className="text-sky-300">Register your team</Link>
+          Already have access? <Link href="/login" className="text-sky-300">Sign in</Link>
         </p>
       </form>
     </AuthShell>

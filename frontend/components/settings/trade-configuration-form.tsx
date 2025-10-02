@@ -6,10 +6,7 @@ import { Label } from "@/components/ui/label";
 import { Slider } from "@/components/ui/slider";
 import { Switch } from "@/components/ui/switch";
 
-function formatNumber(value: number | undefined, fractionDigits = 2) {
-  if (value === undefined || Number.isNaN(value)) return "";
-  return Number(value.toFixed(fractionDigits));
-}
+const formatPercent = (value: number) => `${(value * 100).toFixed(2)}%`;
 
 export function TradeConfigurationForm({
   config,
@@ -24,107 +21,134 @@ export function TradeConfigurationForm({
   onReset: () => void;
   saving: boolean;
 }) {
+  const desiredTrades = Number(config.DESIRED_ACTIVE_TRADES ?? 0);
+  const maxLong = Number(config.MAX_LONG_TRADES ?? 0);
+  const maxShort = Number(config.MAX_SHORT_TRADES ?? 0);
+  const dcaStep = Number(config.SMART_AVG.dca_step_pct ?? 0);
+  const dcaFactor = Number(config.SMART_AVG.dca_factor ?? 1);
+
   return (
     <div className="space-y-6">
       <Card>
         <CardHeader>
-          <CardTitle>Execution envelope</CardTitle>
+          <CardTitle>Конкуренція угод</CardTitle>
+        </CardHeader>
+        <CardContent className="grid gap-6 md:grid-cols-2">
+          <div className="space-y-3">
+            <Label className="text-xs uppercase tracking-[0.3em] text-slate-500">DESIRED ACTIVE TRADES</Label>
+            <div className="space-y-3 rounded-2xl border border-slate-800/70 bg-slate-950/40 p-4">
+              <Slider
+                min={0}
+                max={20}
+                step={1}
+                value={desiredTrades}
+                onChange={(event) => onChange("DESIRED_ACTIVE_TRADES", Number(event.currentTarget.value))}
+              />
+              <div className="flex items-center justify-between text-xs text-slate-400">
+                <span>Активні одночасно</span>
+                <Input
+                  type="number"
+                  min={0}
+                  max={50}
+                  value={desiredTrades}
+                  onChange={(event) => onChange("DESIRED_ACTIVE_TRADES", Number(event.target.value))}
+                  className="h-8 w-24 bg-slate-900 text-right text-sm"
+                />
+              </div>
+            </div>
+          </div>
+          <div className="space-y-3">
+            <Label className="text-xs uppercase tracking-[0.3em] text-slate-500">MAX LONG TRADES</Label>
+            <div className="space-y-3 rounded-2xl border border-slate-800/70 bg-slate-950/40 p-4">
+              <Slider
+                min={0}
+                max={20}
+                step={1}
+                value={maxLong}
+                onChange={(event) => onChange("MAX_LONG_TRADES", Number(event.currentTarget.value))}
+              />
+              <div className="flex items-center justify-between text-xs text-slate-400">
+                <span>Лонги одночасно</span>
+                <Input
+                  type="number"
+                  min={0}
+                  max={50}
+                  value={maxLong}
+                  onChange={(event) => onChange("MAX_LONG_TRADES", Number(event.target.value))}
+                  className="h-8 w-24 bg-slate-900 text-right text-sm"
+                />
+              </div>
+            </div>
+          </div>
+          <div className="space-y-3">
+            <Label className="text-xs uppercase tracking-[0.3em] text-slate-500">MAX SHORT TRADES</Label>
+            <div className="space-y-3 rounded-2xl border border-slate-800/70 bg-slate-950/40 p-4">
+              <Slider
+                min={0}
+                max={20}
+                step={1}
+                value={maxShort}
+                onChange={(event) => onChange("MAX_SHORT_TRADES", Number(event.currentTarget.value))}
+              />
+              <div className="flex items-center justify-between text-xs text-slate-400">
+                <span>Шорти одночасно</span>
+                <Input
+                  type="number"
+                  min={0}
+                  max={50}
+                  value={maxShort}
+                  onChange={(event) => onChange("MAX_SHORT_TRADES", Number(event.target.value))}
+                  className="h-8 w-24 bg-slate-900 text-right text-sm"
+                />
+              </div>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Ручні обмеження</CardTitle>
         </CardHeader>
         <CardContent className="grid gap-4 md:grid-cols-2">
           <div className="space-y-2">
-            <Label>Desired active trades</Label>
+            <Label className="text-sm text-slate-300">Manual balance (USDT)</Label>
+            <div className="flex items-center justify-between rounded-2xl border border-slate-800/70 bg-slate-950/40 p-4">
+              <div>
+                <p className="text-sm font-medium text-slate-100">Фіксований капітал</p>
+                <p className="text-xs text-slate-500">Використати ручне значення замість балансу біржі.</p>
+              </div>
+              <Switch
+                checked={config.USE_MANUAL_BALANCE}
+                onClick={() => onChange("USE_MANUAL_BALANCE", !config.USE_MANUAL_BALANCE)}
+              />
+            </div>
             <Input
               type="number"
-              value={config.DESIRED_ACTIVE_TRADES}
-              onChange={(event) => onChange("DESIRED_ACTIVE_TRADES", Number(event.target.value))}
-            />
-          </div>
-          <div className="space-y-2">
-            <Label>Max long positions</Label>
-            <Input
-              type="number"
-              value={config.MAX_LONG_TRADES}
-              onChange={(event) => onChange("MAX_LONG_TRADES", Number(event.target.value))}
-            />
-          </div>
-          <div className="space-y-2">
-            <Label>Max short positions</Label>
-            <Input
-              type="number"
-              value={config.MAX_SHORT_TRADES}
-              onChange={(event) => onChange("MAX_SHORT_TRADES", Number(event.target.value))}
-            />
-          </div>
-          <div className="space-y-2">
-            <Label>Manual balance (USDT)</Label>
-            <Input
-              type="number"
+              min={0}
               value={config.MANUAL_BALANCE}
+              disabled={!config.USE_MANUAL_BALANCE}
               onChange={(event) => onChange("MANUAL_BALANCE", Number(event.target.value))}
             />
           </div>
           <div className="space-y-2">
-            <Label>Manual leverage</Label>
-            <Input
-              type="number"
-              value={config.MANUAL_LEVERAGE}
-              onChange={(event) => onChange("MANUAL_LEVERAGE", Number(event.target.value))}
-            />
-          </div>
-          <div className="space-y-2">
-            <Label>Account buffer %</Label>
-            <Input
-              type="number"
-              step="0.001"
-              value={formatNumber(config.ACCOUNT_SAFETY_BUFFER_PCT, 3)}
-              onChange={(event) => onChange("ACCOUNT_SAFETY_BUFFER_PCT", Number(event.target.value))}
-            />
-          </div>
-          <div className="space-y-2">
-            <Label>Minimum free USDT</Label>
-            <Input
-              type="number"
-              value={config.ACCOUNT_MIN_FREE_USDT}
-              onChange={(event) => onChange("ACCOUNT_MIN_FREE_USDT", Number(event.target.value))}
-            />
-          </div>
-          <div className="space-y-2">
-            <Label>Dynamic symbol discovery</Label>
+            <Label className="text-sm text-slate-300">Manual leverage</Label>
             <div className="flex items-center justify-between rounded-2xl border border-slate-800/70 bg-slate-950/40 p-4">
-              <div className="space-y-1 text-xs text-slate-400">
-                <p className="text-sm font-medium text-slate-100">Use dynamic symbols</p>
-                <p>Automatically rotate assets by market depth.</p>
+              <div>
+                <p className="text-sm font-medium text-slate-100">Фіксоване плече</p>
+                <p className="text-xs text-slate-500">Перекрити автоматичні налаштування біржі.</p>
               </div>
               <Switch
-                checked={config.USE_DYNAMIC_SYMBOLS}
-                onClick={() => onChange("USE_DYNAMIC_SYMBOLS", !config.USE_DYNAMIC_SYMBOLS)}
+                checked={config.USE_MANUAL_LEVERAGE}
+                onClick={() => onChange("USE_MANUAL_LEVERAGE", !config.USE_MANUAL_LEVERAGE)}
               />
             </div>
-          </div>
-          <div className="space-y-2">
-            <Label>Top symbols volume filter</Label>
             <Input
               type="number"
-              value={config.GET_TOP_SYMBOLS_CONFIG.min_volume}
-              onChange={(event) =>
-                onChange(
-                  "GET_TOP_SYMBOLS_CONFIG",
-                  { ...config.GET_TOP_SYMBOLS_CONFIG, min_volume: Number(event.target.value) },
-                )
-              }
-            />
-          </div>
-          <div className="space-y-2">
-            <Label>Top symbols limit</Label>
-            <Input
-              type="number"
-              value={config.GET_TOP_SYMBOLS_CONFIG.limit}
-              onChange={(event) =>
-                onChange(
-                  "GET_TOP_SYMBOLS_CONFIG",
-                  { ...config.GET_TOP_SYMBOLS_CONFIG, limit: Number(event.target.value) },
-                )
-              }
+              min={0}
+              value={config.MANUAL_LEVERAGE}
+              disabled={!config.USE_MANUAL_LEVERAGE}
+              onChange={(event) => onChange("MANUAL_LEVERAGE", Number(event.target.value))}
             />
           </div>
         </CardContent>
@@ -132,81 +156,153 @@ export function TradeConfigurationForm({
 
       <Card>
         <CardHeader>
-          <CardTitle>Smart averaging</CardTitle>
+          <CardTitle>SMART_AVG профіль</CardTitle>
         </CardHeader>
-        <CardContent className="grid gap-4 md:grid-cols-2">
+        <CardContent className="grid gap-6 md:grid-cols-2">
           <div className="space-y-2">
-            <Label>Smart averaging</Label>
-            <div className="flex items-center justify-between rounded-2xl border border-slate-800/70 bg-slate-950/40 p-4">
-              <div className="space-y-1 text-xs text-slate-400">
-                <p className="text-sm font-medium text-slate-100">Enable laddering</p>
-                <p>Allow the bot to average into volatility.</p>
-              </div>
+            <Label className="text-sm text-slate-300">Ладер увімкнено</Label>
+            <div className="flex items-center justify-between rounded-2xl border border-slate-800/70 bg-slate-950/40 px-4 py-3">
+              <span className="text-xs text-slate-500">Активувати DCA алгоритм для позицій.</span>
               <Switch
                 checked={config.SMART_AVG.enabled}
                 onClick={() => onChange("SMART_AVG.enabled", !config.SMART_AVG.enabled)}
               />
             </div>
           </div>
+
           <div className="space-y-2">
-            <Label>DCA leverage</Label>
+            <Label>Leverage</Label>
             <Input
               type="number"
+              min={0}
               value={config.SMART_AVG.leverage}
               onChange={(event) => onChange("SMART_AVG.leverage", Number(event.target.value))}
             />
           </div>
+
           <div className="space-y-2">
-            <Label>Base margin</Label>
+            <Label>Base margin (USDT)</Label>
             <Input
               type="number"
+              min={0}
               value={config.SMART_AVG.base_margin}
               onChange={(event) => onChange("SMART_AVG.base_margin", Number(event.target.value))}
             />
           </div>
+
           <div className="space-y-2">
             <Label>Max adds</Label>
             <Input
               type="number"
+              min={0}
               value={config.SMART_AVG.max_adds}
               onChange={(event) => onChange("SMART_AVG.max_adds", Number(event.target.value))}
             />
           </div>
+
           <div className="space-y-2">
-            <Label>DCA step %</Label>
-            <Slider
-              min={0}
-              max={0.1}
-              step={0.001}
-              value={config.SMART_AVG.dca_step_pct}
-              onChange={(event) => onChange("SMART_AVG.dca_step_pct", Number(event.currentTarget.value))}
-            />
-            <p className="text-xs text-slate-400">{(config.SMART_AVG.dca_step_pct * 100).toFixed(2)}%</p>
+            <Label>DCA step</Label>
+            <div className="space-y-3 rounded-2xl border border-slate-800/70 bg-slate-950/40 p-4">
+              <Slider
+                min={0}
+                max={0.1}
+                step={0.001}
+                value={dcaStep}
+                onChange={(event) => onChange("SMART_AVG.dca_step_pct", Number(event.currentTarget.value))}
+              />
+              <p className="text-xs text-slate-400">{formatPercent(dcaStep)}</p>
+            </div>
           </div>
+
           <div className="space-y-2">
-            <Label>Take profit from average %</Label>
+            <Label>DCA factor</Label>
+            <div className="space-y-3 rounded-2xl border border-slate-800/70 bg-slate-950/40 p-4">
+              <Slider
+                min={1}
+                max={3}
+                step={0.05}
+                value={dcaFactor}
+                onChange={(event) => onChange("SMART_AVG.dca_factor", Number(event.currentTarget.value))}
+              />
+              <p className="text-xs text-slate-400">x{dcaFactor.toFixed(2)}</p>
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            <Label>Primary take profit %</Label>
             <Input
               type="number"
-              step="0.001"
+              step="0.0001"
               value={config.SMART_AVG.tp_from_avg_pct}
               onChange={(event) => onChange("SMART_AVG.tp_from_avg_pct", Number(event.target.value))}
             />
           </div>
+
           <div className="space-y-2">
-            <Label>Alt take profit %</Label>
+            <Label>Alternative take profit %</Label>
             <Input
               type="number"
-              step="0.001"
+              step="0.0001"
               value={config.SMART_AVG.alt_tp_from_avg_pct}
               onChange={(event) => onChange("SMART_AVG.alt_tp_from_avg_pct", Number(event.target.value))}
             />
           </div>
+
           <div className="space-y-2">
-            <Label>Max margin per trade</Label>
+            <Label>Max margin per trade (USDT)</Label>
             <Input
               type="number"
+              min={0}
               value={config.SMART_AVG.max_margin_per_trade}
               onChange={(event) => onChange("SMART_AVG.max_margin_per_trade", Number(event.target.value))}
+            />
+          </div>
+
+          <div className="space-y-2">
+            <Label>Min liquidity buffer %</Label>
+            <Input
+              type="number"
+              step="0.0001"
+              value={config.SMART_AVG.min_liq_buffer}
+              onChange={(event) => onChange("SMART_AVG.min_liq_buffer", Number(event.target.value))}
+            />
+          </div>
+
+          <div className="space-y-2">
+            <Label>ATR pause %</Label>
+            <Input
+              type="number"
+              step="0.01"
+              value={config.SMART_AVG.atr_pause_pct}
+              onChange={(event) => onChange("SMART_AVG.atr_pause_pct", Number(event.target.value))}
+            />
+          </div>
+
+          <div className="space-y-2">
+            <Label>Trend flip cut %</Label>
+            <Input
+              type="number"
+              step="0.0001"
+              value={config.SMART_AVG.trend_flip_cut_pct}
+              onChange={(event) => onChange("SMART_AVG.trend_flip_cut_pct", Number(event.target.value))}
+            />
+          </div>
+
+          <div className="space-y-2">
+            <Label>Cooldown (minutes)</Label>
+            <Input
+              type="number"
+              min={0}
+              value={config.SMART_AVG.cooldown_min}
+              onChange={(event) => onChange("SMART_AVG.cooldown_min", Number(event.target.value))}
+            />
+          </div>
+
+          <div className="space-y-2">
+            <Label>Anchor</Label>
+            <Input
+              value={config.SMART_AVG.anchor}
+              onChange={(event) => onChange("SMART_AVG.anchor", event.target.value)}
             />
           </div>
         </CardContent>
@@ -214,10 +310,10 @@ export function TradeConfigurationForm({
 
       <div className="flex flex-wrap items-center gap-3">
         <Button onClick={onSave} disabled={saving}>
-          {saving ? "Saving..." : "Save configuration"}
+          {saving ? "Збереження..." : "Зберегти"}
         </Button>
         <Button type="button" variant="secondary" onClick={onReset} disabled={saving}>
-          Reset to defaults
+          По замовчуванню
         </Button>
       </div>
     </div>

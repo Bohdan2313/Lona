@@ -6,16 +6,14 @@ import { Button } from "@/components/ui/button";
 export default function LandingPage() {
   const highlights = [
     {
-      title: "Autonomous execution",
-      description: "Deploy AI-curated trade flows that adapt to volatility, liquidity, and sentiment in real time.",
-    },
-    {
       title: "Configurable intelligence",
-      description: "Fine-tune leverage, risk ceilings, and market scanners with human-readable controls backed by JSON schemas.",
+      description: "Tune leverage, balance envelopes, and the full SMART_AVG ladder from a tactile command surface.",
+      href: "/settings/config",
     },
     {
       title: "Unified operations",
-      description: "A premium-grade control room for monitoring bots, editing strategies, and collaborating with your team.",
+      description: "Shape entry logic across RSI, MACD, trend and pattern clusters with live, multi-select rule editors.",
+      href: "/settings/conditions",
     },
   ];
 
@@ -66,15 +64,20 @@ export default function LandingPage() {
               <div className="mt-4 h-32 rounded-2xl border border-slate-800/60 bg-[linear-gradient(135deg,rgba(56,189,248,0.25),rgba(14,116,144,0.25))]" />
             </div>
           </div>
-          <section className="grid gap-6 md:grid-cols-3">
+          <section className="grid gap-6 md:grid-cols-2">
             {highlights.map((item) => (
-              <div
+              <Link
                 key={item.title}
-                className="rounded-3xl border border-slate-800/60 bg-slate-900/50 p-6 backdrop-blur-xl transition hover:border-sky-500/60 hover:shadow-glow"
+                href={item.href}
+                className="group rounded-3xl border border-slate-800/60 bg-slate-900/50 p-6 backdrop-blur-xl transition hover:border-sky-500/60 hover:shadow-glow"
               >
-                <h3 className="text-lg font-semibold text-slate-50">{item.title}</h3>
-                <p className="mt-3 text-sm text-slate-400">{item.description}</p>
-              </div>
+                <h3 className="text-lg font-semibold text-slate-50 group-hover:text-sky-200">{item.title}</h3>
+                <p className="mt-3 text-sm text-slate-400 group-hover:text-slate-200">{item.description}</p>
+                <span className="mt-6 inline-flex items-center gap-2 text-sm font-medium text-sky-300 group-hover:text-sky-200">
+                  Enter console
+                  <ArrowRight className="h-4 w-4" />
+                </span>
+              </Link>
             ))}
           </section>
         </div>

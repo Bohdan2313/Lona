@@ -1,3 +1,5 @@
+import { useMemo } from "react";
+
 import { TradeConditions, ConditionSet, IndicatorCondition, IndicatorPair } from "@/types";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -99,12 +101,45 @@ function ConditionPairList({
   );
 }
 
+const buildIndicatorOptions = (value: ConditionSet): Record<string, string[]> => {
+  const registry: Record<string, Set<string>> = {};
+  const register = ([indicator, option]: IndicatorCondition) => {
+    if (!registry[indicator]) {
+      registry[indicator] = new Set();
+    }
+    registry[indicator].add(option);
+  };
+
+  value.core.forEach(register);
+  value.pairs.forEach((pair) => {
+    pair.forEach(register);
+  });
+
+  return Object.fromEntries(
+    Object.entries(registry)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([indicator, options]) => [indicator, Array.from(options).sort()])
+  );
+};
+
 function ConditionSetEditor({ title, value, onChange }: { title: string; value: ConditionSet; onChange: (next: ConditionSet) => void }) {
   const antiFilters = (value.anti_filters ?? {}) as Record<string, any>;
+  const indicatorPalette = useMemo(() => buildIndicatorOptions(value), [value]);
 
   const updateAntiFilters = (key: string, nextValue: any) => {
     const next = { ...antiFilters, [key]: nextValue };
     onChange({ ...value, anti_filters: next });
+  };
+
+  const toggleCoreCondition = (indicator: string, option: string) => {
+    const exists = value.core.some(([field, val]) => field === indicator && val === option);
+    let nextCore: IndicatorCondition[];
+    if (exists) {
+      nextCore = value.core.filter(([field, val]) => !(field === indicator && val === option));
+    } else {
+      nextCore = [...value.core, [indicator, option]];
+    }
+    onChange({ ...value, core: nextCore });
   };
 
   return (
@@ -113,6 +148,38 @@ function ConditionSetEditor({ title, value, onChange }: { title: string; value: 
         <CardTitle>{title}</CardTitle>
       </CardHeader>
       <CardContent className="space-y-6">
+        <div className="space-y-3">
+          <p className="text-xs uppercase tracking-[0.3em] text-slate-500">Індикаторний палітровий вибір</p>
+          <div className="grid gap-3 md:grid-cols-2">
+            {Object.entries(indicatorPalette).map(([indicator, options]) => (
+              <div key={indicator} className="space-y-2 rounded-2xl border border-slate-800/70 bg-slate-950/40 p-4">
+                <h4 className="text-sm font-semibold text-slate-100">{indicator}</h4>
+                <div className="flex flex-wrap gap-2">
+                  {options.map((option) => {
+                    const active = value.core.some(([field, val]) => field === indicator && val === option);
+                    return (
+                      <Button
+                        key={option}
+                        type="button"
+                        size="sm"
+                        variant={active ? "default" : "outline"}
+                        className={
+                          active
+                            ? "border-sky-500/60 bg-sky-600/20 text-sky-100 hover:bg-sky-600/30"
+                            : "border-slate-800/80 bg-transparent text-slate-300 hover:text-slate-100"
+                        }
+                        onClick={() => toggleCoreCondition(indicator, option)}
+                      >
+                        {option}
+                      </Button>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
         <ConditionList
           title="Core conditions"
           conditions={value.core}
@@ -246,13 +313,13 @@ export function TradeConditionsForm({
 
       <div className="flex flex-wrap items-center gap-3">
         <Button onClick={onSave} disabled={saving}>
-          {saving ? "Saving..." : "Save conditions"}
+          {saving ? "Збереження..." : "Зберегти"}
         </Button>
         <Button type="button" variant="secondary" onClick={onReset} disabled={saving}>
-          Reset
+          Скасувати зміни
         </Button>
         <Button type="button" variant="outline" onClick={onUseDefaults} disabled={saving}>
-          Use default logic
+          По замовчуванню
         </Button>
       </div>
     </div>
